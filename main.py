@@ -55,6 +55,15 @@ def str_to_bool(value):
 
 def parse_args(args=None):
     """解析命令行参数"""
+    raw_args = sys.argv[1:] if args is None else list(args)
+    import re
+    normalized_args = []
+    for a in raw_args:
+        if isinstance(a, str) and a.startswith(("—", "–", "－")):
+            normalized_args.append(re.sub(r"^[—–－]+-?", "--", a))
+        else:
+            normalized_args.append(a)
+
     parser = argparse.ArgumentParser(
         description="Samueli924/chaoxing",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -117,11 +126,11 @@ def parse_args(args=None):
     )
 
     # 在解析之前捕获 -h 的行为
-    if args is None and len(sys.argv) == 2 and sys.argv[1] in {"-h", "--help"}:
+    if len(normalized_args) == 1 and normalized_args[0] in {"-h", "--help"}:
         parser.print_help()
         sys.exit(0)
 
-    return parser.parse_args(args)
+    return parser.parse_args(normalized_args)
 
 
 def load_config_from_file(config_path):
