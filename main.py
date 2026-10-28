@@ -53,7 +53,7 @@ def str_to_bool(value):
     return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-def parse_args():
+def parse_args(args=None):
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
         description="Samueli924/chaoxing",
@@ -61,6 +61,13 @@ def parse_args():
     )
 
     parser.add_argument("--use-cookies", action="store_true", help="使用cookies登录")
+
+    parser.add_argument(
+        "--webui", action="store_true", help="启动本地 Web 控制台服务"
+    )
+    parser.add_argument(
+        "--port", type=int, default=5000, help="Web 控制台服务端口 (默认 5000)"
+    )
 
     parser.add_argument(
         "-c", "--config", type=str, default=None, help="使用配置文件运行程序"
@@ -110,11 +117,11 @@ def parse_args():
     )
 
     # 在解析之前捕获 -h 的行为
-    if len(sys.argv) == 2 and sys.argv[1] in {"-h", "--help"}:
+    if args is None and len(sys.argv) == 2 and sys.argv[1] in {"-h", "--help"}:
         parser.print_help()
         sys.exit(0)
 
-    return parser.parse_args()
+    return parser.parse_args(args)
 
 
 def load_config_from_file(config_path):
@@ -197,9 +204,10 @@ def build_config_from_args(args):
     return common_config, {}, {}
 
 
-def init_config():
+def init_config(args=None):
     """初始化配置"""
-    args = parse_args()
+    if args is None:
+        args = parse_args()
 
     if args.config:
         common_config, tiku_config, notification_config = load_config_from_file(args.config)
@@ -550,8 +558,19 @@ def format_time(num, suffix='', divisor=''):
 def main():
     """主程序入口"""
     try:
+        args = parse_args()
+        if getattr(args, "webui", False):
+            import webbrowser
+            from api.web_server import create_app
+            port = getattr(args, "port", 5000)
+            app = create_app()
+            logger.info(f"正在启动 Web 控制台: http://127.0.0.1:{port}")
+            webbrowser.open(f"http://127.0.0.1:{port}")
+            app.run(host="127.0.0.1", port=port, debug=False)
+            return
+
         # 初始化配置
-        common_config, tiku_config, notification_config, config_path = init_config()
+        common_config, tiku_config, notification_config, config_path = init_config(args=args)
 
         # 强制播放按照配置文件调节
         common_config["speed"] = min(2.0, max(1.0, common_config.get("speed", 1.0)))
