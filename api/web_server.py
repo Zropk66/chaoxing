@@ -94,6 +94,7 @@ def create_app(test_config: Optional[dict] = None) -> Flask:
         if res.get("status") == "SUCCESS":
             account_mgr.save_account(username, {
                 "username": username,
+                "password": password,
                 "cookies": res.get("cookies", ""),
                 "use_cookies": "true",
             })
