@@ -94,9 +94,8 @@ def create_app(test_config: Optional[dict] = None) -> Flask:
         if res.get("status") == "SUCCESS":
             account_mgr.save_account(username, {
                 "username": username,
-                "password": password,
                 "cookies": res.get("cookies", ""),
-                "use_cookies": "false",
+                "use_cookies": "true",
             })
             return jsonify({"status": "success", "account_id": username})
         return jsonify({"status": "error", "msg": res.get("msg", "登录失败")}), 401
@@ -105,12 +104,39 @@ def create_app(test_config: Optional[dict] = None) -> Flask:
     def get_courses():
         active = account_mgr.get_active_account()
         if not active:
-            return jsonify({"courses": []})
+            return jsonify({"courses": [], "selected_ids": []})
 
         cfg_mgr = get_active_config_manager()
         selected_ids = set(cfg_mgr.get_course_list())
+        courses = []
+        cookies_str = active.get("cookies", "")
+        if cookies_str:
+            try:
+                from api.base import Chaoxing, Account
+                from api.answer import Tiku
+                account = Account(active.get("username", ""), "")
+                cx = Chaoxing(account=account, tiku=Tiku())
+                cookie_dict = {}
+                for item in cookies_str.split(";"):
+                    if "=" in item:
+                        k, v = item.strip().split("=", 1)
+                        cookie_dict[k] = v
+                cx._session.cookies.update(cookie_dict)
+                raw_courses = cx.get_course_list()
+                for c in raw_courses:
+                    cid = str(c.get("courseId", ""))
+                    courses.append({
+                        "courseId": cid,
+                        "clazzId": str(c.get("clazzId", "")),
+                        "cpi": str(c.get("cpi", "")),
+                        "title": c.get("title", ""),
+                        "teacher": c.get("teacher", ""),
+                        "selected": cid in selected_ids,
+                    })
+            except Exception as e:
+                hub.append_log("ERROR", f"获取课程列表失败: {e}")
 
-        return jsonify({"courses": [], "selected_ids": list(selected_ids)})
+        return jsonify({"courses": courses, "selected_ids": list(selected_ids)})
 
     @app.route("/api/config/course_list", methods=["POST"])
     def save_course_list():

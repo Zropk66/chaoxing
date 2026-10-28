@@ -73,11 +73,13 @@ class ChaoXingQRManager:
                 }
             elif status_type == 2:
                 return {"status": "CONFIRMED"}
-            elif status_type == 1:
+            elif status_type in (1, 0, None):
                 return {"status": "PENDING"}
-            else:
+            elif status_type == 6:
                 self._sessions.pop(session_id, None)
                 return {"status": "EXPIRED"}
+            else:
+                return {"status": "PENDING"}
         except Exception:
             return {"status": "PENDING"}
 

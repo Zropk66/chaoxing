@@ -55,13 +55,25 @@ async function loadAccounts() {
     data.accounts.forEach(acc => {
       const item = document.createElement('div');
       item.className = `dropdown-item ${acc.active ? 'active' : ''}`;
-      item.innerHTML = `
-        <div>
-          <div style="font-weight: 600;">${acc.username}</div>
-          <div style="font-size: 0.7rem; color: var(--text-dim);">${acc.file}</div>
-        </div>
-        ${acc.active ? '<span class="badge badge-blue">当前</span>' : ''}
-      `;
+      const textWrap = document.createElement('div');
+      const uEl = document.createElement('div');
+      uEl.style.fontWeight = '600';
+      uEl.textContent = acc.username;
+      const fEl = document.createElement('div');
+      fEl.style.fontSize = '0.7rem';
+      fEl.style.color = 'var(--text-dim)';
+      fEl.textContent = acc.file;
+      textWrap.appendChild(uEl);
+      textWrap.appendChild(fEl);
+      item.appendChild(textWrap);
+
+      if (acc.active) {
+        const badge = document.createElement('span');
+        badge.className = 'badge badge-blue';
+        badge.textContent = '当前';
+        item.appendChild(badge);
+      }
+
       item.onclick = async () => {
         await API.switchAccount(acc.id);
         toggleAccountDropdown(false);
@@ -192,14 +204,44 @@ async function loadCourses() {
     courses.forEach(c => {
       const isChecked = selected.has(String(c.courseId));
       const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td><input type="checkbox" class="course-cb" value="${c.courseId}" ${isChecked ? 'checked' : ''} onchange="updateSelectedCount()"></td>
-        <td style="font-weight: 500;">${c.title}</td>
-        <td style="font-family: var(--font-mono); color: var(--text-muted);">${c.courseId}</td>
-        <td>${c.clazzId || '-'}</td>
-        <td>${c.teacher || '-'}</td>
-        <td><span class="badge ${c.progress >= 100 ? 'badge-green' : 'badge-blue'}">${c.progress || 0}%</span></td>
-      `;
+
+      const tdCb = document.createElement('td');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'course-cb';
+      cb.value = c.courseId;
+      cb.checked = isChecked;
+      cb.onchange = updateSelectedCount;
+      tdCb.appendChild(cb);
+
+      const tdTitle = document.createElement('td');
+      tdTitle.style.fontWeight = '500';
+      tdTitle.textContent = c.title || '-';
+
+      const tdId = document.createElement('td');
+      tdId.style.fontFamily = 'var(--font-mono)';
+      tdId.style.color = 'var(--text-muted)';
+      tdId.textContent = c.courseId;
+
+      const tdClazz = document.createElement('td');
+      tdClazz.textContent = c.clazzId || '-';
+
+      const tdTeacher = document.createElement('td');
+      tdTeacher.textContent = c.teacher || '-';
+
+      const tdProg = document.createElement('td');
+      const badge = document.createElement('span');
+      const pct = c.progress || 0;
+      badge.className = `badge ${pct >= 100 ? 'badge-green' : 'badge-blue'}`;
+      badge.textContent = `${pct}%`;
+      tdProg.appendChild(badge);
+
+      tr.appendChild(tdCb);
+      tr.appendChild(tdTitle);
+      tr.appendChild(tdId);
+      tr.appendChild(tdClazz);
+      tr.appendChild(tdTeacher);
+      tr.appendChild(tdProg);
       tbody.appendChild(tr);
     });
     updateSelectedCount();
@@ -409,7 +451,8 @@ function handleManualQuestion(data) {
       const card = document.createElement('div');
       card.className = 'quiz-option-card';
       card.textContent = opt;
-      const letter = opt.trim().substring(0, 1).toUpperCase();
+      const match = opt.trim().match(/^[A-Za-z]/);
+      const letter = match ? match[0].toUpperCase() : opt.trim();
       card.onclick = () => {
         if (qType === 'multiple') {
           card.classList.toggle('selected');
@@ -487,6 +530,59 @@ function initSSE() {
     } catch (err) {}
   });
 
+  evtSource.addEventListener('WORKER_UPDATE', e => {
+    try {
+      const w = JSON.parse(e.data);
+      const wContainer = document.getElementById('workersContainer');
+      if (!wContainer) return;
+      let card = document.getElementById(`worker_card_${w.id}`);
+      const pct = w.duration > 0 ? Math.min(100, Math.round((w.position / w.duration) * 100)) : 0;
+      if (!card) {
+        if (wContainer.textContent.includes('暂无活动工作线程')) {
+          wContainer.innerHTML = '';
+        }
+        card = document.createElement('div');
+        card.id = `worker_card_${w.id}`;
+        card.className = 'worker-card';
+        wContainer.appendChild(card);
+      }
+      card.innerHTML = '';
+      const header = document.createElement('div');
+      header.className = 'worker-header';
+      const title = document.createElement('div');
+      title.className = 'worker-title';
+      title.textContent = `${w.id}: ${w.chapter || '待命'}`;
+      const badge = document.createElement('span');
+      badge.className = `badge ${w.status === 'PLAYING' ? 'badge-blue' : 'badge-gray'}`;
+      badge.textContent = `${w.speed || 1.0}x`;
+      header.appendChild(title);
+      header.appendChild(badge);
+
+      const pbWrap = document.createElement('div');
+      pbWrap.className = 'progress-bar-wrap';
+      const pbFill = document.createElement('div');
+      pbFill.className = 'progress-fill';
+      pbFill.style.width = `${pct}%`;
+      pbWrap.appendChild(pbFill);
+
+      const footer = document.createElement('div');
+      footer.style.fontSize = '0.7rem';
+      footer.style.color = 'var(--text-dim)';
+      footer.style.display = 'flex';
+      footer.style.justifyContent = 'space-between';
+      const timeSpan = document.createElement('span');
+      timeSpan.textContent = `${w.position || 0}s / ${w.duration || 0}s`;
+      const pctSpan = document.createElement('span');
+      pctSpan.textContent = `${pct}%`;
+      footer.appendChild(timeSpan);
+      footer.appendChild(pctSpan);
+
+      card.appendChild(header);
+      card.appendChild(pbWrap);
+      card.appendChild(footer);
+    } catch (err) {}
+  });
+
   evtSource.addEventListener('MANUAL_QUESTION_REQUEST', e => {
     try {
       const data = JSON.parse(e.data);
@@ -515,19 +611,40 @@ function updateDashboardStats(data) {
       const card = document.createElement('div');
       card.className = 'worker-card';
       const pct = w.duration > 0 ? Math.min(100, Math.round((w.position / w.duration) * 100)) : 0;
-      card.innerHTML = `
-        <div class="worker-header">
-          <div class="worker-title">${w.id}: ${w.chapter || '待命'}</div>
-          <span class="badge ${w.status === 'PLAYING' ? 'badge-blue' : 'badge-gray'}">${w.speed || 1.0}x</span>
-        </div>
-        <div class="progress-bar-wrap">
-          <div class="progress-fill" style="width: ${pct}%;"></div>
-        </div>
-        <div style="font-size: 0.7rem; color: var(--text-dim); display: flex; justify-content: space-between;">
-          <span>${w.position || 0}s / ${w.duration || 0}s</span>
-          <span>${pct}%</span>
-        </div>
-      `;
+
+      const header = document.createElement('div');
+      header.className = 'worker-header';
+      const title = document.createElement('div');
+      title.className = 'worker-title';
+      title.textContent = `${w.id}: ${w.chapter || '待命'}`;
+      const badge = document.createElement('span');
+      badge.className = `badge ${w.status === 'PLAYING' ? 'badge-blue' : 'badge-gray'}`;
+      badge.textContent = `${w.speed || 1.0}x`;
+      header.appendChild(title);
+      header.appendChild(badge);
+
+      const pbWrap = document.createElement('div');
+      pbWrap.className = 'progress-bar-wrap';
+      const pbFill = document.createElement('div');
+      pbFill.className = 'progress-fill';
+      pbFill.style.width = `${pct}%`;
+      pbWrap.appendChild(pbFill);
+
+      const footer = document.createElement('div');
+      footer.style.fontSize = '0.7rem';
+      footer.style.color = 'var(--text-dim)';
+      footer.style.display = 'flex';
+      footer.style.justifyContent = 'space-between';
+      const timeSpan = document.createElement('span');
+      timeSpan.textContent = `${w.position || 0}s / ${w.duration || 0}s`;
+      const pctSpan = document.createElement('span');
+      pctSpan.textContent = `${pct}%`;
+      footer.appendChild(timeSpan);
+      footer.appendChild(pctSpan);
+
+      card.appendChild(header);
+      card.appendChild(pbWrap);
+      card.appendChild(footer);
       wContainer.appendChild(card);
     });
   }

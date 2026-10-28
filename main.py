@@ -559,14 +559,14 @@ def main():
     """主程序入口"""
     try:
         args = parse_args()
-        if getattr(args, "webui", False):
+        if args.webui:
             import webbrowser
             from api.web_server import create_app
-            port = getattr(args, "port", 5000)
+            port = args.port
             app = create_app()
-            logger.info(f"正在启动 Web 控制台: http://127.0.0.1:{port}")
+            logger.info(f"正在启动 Web 控制台: http://0.0.0.0:{port}")
             webbrowser.open(f"http://127.0.0.1:{port}")
-            app.run(host="127.0.0.1", port=port, debug=False)
+            app.run(host="0.0.0.0", port=port, debug=False)
             return
 
         # 初始化配置

@@ -67,6 +67,20 @@ class TaskStateHub:
                 self._workers[worker_id] = {"id": worker_id}
             self._workers[worker_id].update(data)
             self._workers[worker_id]["updated_at"] = time.time()
+            worker_copy = dict(self._workers[worker_id])
+        self.broadcast_event("WORKER_UPDATE", worker_copy)
+
+    def set_total_jobs(self, total: int) -> None:
+        with self._lock:
+            self._overall_stats["total_jobs"] = total
+
+    def increment_completed_jobs(self) -> None:
+        with self._lock:
+            self._overall_stats["completed_jobs"] += 1
+
+    def increment_passed_tests(self) -> None:
+        with self._lock:
+            self._overall_stats["passed_tests"] += 1
 
     def append_log(self, level: str, message: str) -> None:
         now_str = time.strftime("%H:%M:%S")

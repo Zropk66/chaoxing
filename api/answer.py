@@ -1643,7 +1643,8 @@ class TikuManual(Tiku):
                     return None
                 return self._normalize_user_input(ans, q)
         except Exception as e:
-            logger.debug(f"Web 模式手动答题异常，回退控制台输入: {e}")
+            logger.debug(f"Web 模式手动答题异常，安全返回空答案: {e}")
+            return None
 
         type_str = self._get_type_display(q['type'])
         if q['type'] in ['single', 'multiple'] and q.get('options'):

@@ -1,5 +1,6 @@
 import configparser
 import os
+import threading
 from typing import Any, Optional
 
 
@@ -25,60 +26,65 @@ class ConfigManager:
     def __init__(self, config_path: str, template_path: str = "config_template.ini") -> None:
         self.config_path = config_path
         self.template_path = template_path
+        self._lock = threading.Lock()
 
     def get_course_list(self) -> list[str]:
-        cfg = self._read_ini(self.config_path)
-        val = cfg.get("common", "course_list", fallback="")
-        if not val:
-            return []
-        return [item.strip() for item in val.split(",") if item.strip()]
+        with self._lock:
+            cfg = self._read_ini(self.config_path)
+            val = cfg.get("common", "course_list", fallback="")
+            if not val:
+                return []
+            return [item.strip() for item in val.split(",") if item.strip()]
 
     def set_course_list(self, course_ids: list[str]) -> None:
-        cfg = self._read_ini(self.config_path)
-        if not cfg.has_section("common"):
-            cfg.add_section("common")
-        cfg.set("common", "course_list", ",".join(course_ids))
-        self._write_ini(cfg, self.config_path)
+        with self._lock:
+            cfg = self._read_ini(self.config_path)
+            if not cfg.has_section("common"):
+                cfg.add_section("common")
+            cfg.set("common", "course_list", ",".join(course_ids))
+            self._write_ini(cfg, self.config_path)
 
     def get_full_config(self) -> dict[str, dict[str, Any]]:
-        template_cfg = self._read_ini(self.template_path) if os.path.exists(self.template_path) else None
-        target_cfg = self._read_ini(self.config_path)
+        with self._lock:
+            template_cfg = self._read_ini(self.template_path) if os.path.exists(self.template_path) else None
+            target_cfg = self._read_ini(self.config_path)
 
-        sections = ["common", "tiku", "notification"]
-        result: dict[str, dict[str, Any]] = {}
+            sections = ["common", "tiku", "notification"]
+            result: dict[str, dict[str, Any]] = {}
 
-        for sec in sections:
-            result[sec] = {}
-            if template_cfg and template_cfg.has_section(sec):
-                for k, v in template_cfg.items(sec):
-                    result[sec][k] = self._cast_value(k, v)
+            for sec in sections:
+                result[sec] = {}
+                if template_cfg and template_cfg.has_section(sec):
+                    for k, v in template_cfg.items(sec):
+                        result[sec][k] = self._cast_value(k, v)
 
-            if target_cfg.has_section(sec):
-                for k, v in target_cfg.items(sec):
-                    result[sec][k] = self._cast_value(k, v)
+                if target_cfg.has_section(sec):
+                    for k, v in target_cfg.items(sec):
+                        result[sec][k] = self._cast_value(k, v)
 
-        return result
+            return result
 
     def update_full_config(self, config_dict: dict[str, dict[str, Any]]) -> None:
-        cfg = self._read_ini(self.config_path)
+        with self._lock:
+            cfg = self._read_ini(self.config_path)
 
-        for sec, items in config_dict.items():
-            if not isinstance(items, dict):
-                continue
-            if not cfg.has_section(sec):
-                cfg.add_section(sec)
-            for k, v in items.items():
-                if isinstance(v, bool):
-                    val_str = "true" if v else "false"
-                elif isinstance(v, list):
-                    val_str = ",".join(str(x) for x in v)
-                elif v is None:
-                    val_str = ""
-                else:
-                    val_str = str(v)
-                cfg.set(sec, str(k), val_str)
+            for sec, items in config_dict.items():
+                if not isinstance(items, dict):
+                    continue
+                if not cfg.has_section(sec):
+                    cfg.add_section(sec)
+                for k, v in items.items():
+                    if isinstance(v, bool):
+                        val_str = "true" if v else "false"
+                    elif isinstance(v, list):
+                        val_str = ",".join(str(x) for x in v)
+                    elif v is None:
+                        val_str = ""
+                    else:
+                        val_str = str(v)
+                    cfg.set(sec, str(k), val_str)
 
-        self._write_ini(cfg, self.config_path)
+            self._write_ini(cfg, self.config_path)
 
     @classmethod
     def _cast_value(cls, key: str, value: str) -> Any:

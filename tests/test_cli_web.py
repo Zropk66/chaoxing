@@ -5,7 +5,7 @@ from main import parse_args
 class TestCliWebFlag(unittest.TestCase):
     def test_webui_flag_default(self):
         args = parse_args([])
-        self.assertFalse(getattr(args, "webui", False))
+        self.assertFalse(args.webui)
 
     def test_webui_flag_enabled(self):
         args = parse_args(["--webui"])
