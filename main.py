@@ -565,7 +565,10 @@ def main():
             port = args.port
             app = create_app()
             logger.info(f"正在启动 Web 控制台: http://0.0.0.0:{port}")
-            webbrowser.open(f"http://127.0.0.1:{port}")
+            try:
+                webbrowser.open(f"http://127.0.0.1:{port}")
+            except Exception as e:
+                logger.warning(f"无法自动拉起浏览器，请手动访问: {e}")
             app.run(host="0.0.0.0", port=port, debug=False)
             return
 

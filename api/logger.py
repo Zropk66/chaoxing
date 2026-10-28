@@ -32,14 +32,11 @@ def tqdm_sink(msg):
         tqdm.write(msg.rstrip(), file=tqdm_stream)
     tqdm_stream.flush()
 
-    try:
-        if 'api.task_runner' in sys.modules:
-            hub = sys.modules['api.task_runner'].TaskStateHub()
-            if hub.is_web_mode():
-                rec = msg.record
-                hub.append_log(rec['level'].name, rec['message'])
-    except Exception:
-        pass
+    if 'api.task_runner' in sys.modules:
+        hub = sys.modules['api.task_runner'].TaskStateHub()
+        if hub.is_web_mode():
+            rec = msg.record
+            hub.append_log(rec['level'].name, rec['message'])
 
 
 logger.remove()

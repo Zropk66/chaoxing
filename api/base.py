@@ -933,21 +933,18 @@ class Chaoxing:
                     logger.trace("Progress logged")
 
                 current_speed = _speed
-                try:
-                    from api.task_runner import TaskStateHub
-                    hub = TaskStateHub()
-                    if hub.is_web_mode():
-                        t_name = threading.current_thread().name
-                        current_speed = hub.get_effective_speed(t_name)
-                        hub.update_worker_state(t_name, {
-                            "chapter": _job.get("name", ""),
-                            "position": int(play_time),
-                            "duration": int(duration),
-                            "speed": current_speed,
-                            "status": "PLAYING",
-                        })
-                except Exception:
-                    pass
+                from api.task_runner import TaskStateHub
+                hub = TaskStateHub()
+                if hub.is_web_mode():
+                    t_name = threading.current_thread().name
+                    current_speed = hub.get_effective_speed(t_name)
+                    hub.update_worker_state(t_name, {
+                        "chapter": _job.get("name", ""),
+                        "position": int(play_time),
+                        "duration": int(duration),
+                        "speed": current_speed,
+                        "status": "PLAYING",
+                    })
 
                 dt = (time.time() - last_iter) * current_speed
                 last_iter = time.time()

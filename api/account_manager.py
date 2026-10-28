@@ -21,8 +21,10 @@ class AccountManager:
             config = configparser.ConfigParser(interpolation=None)
             try:
                 config.read(file_path, encoding="utf8")
-            except Exception:
-                continue
+            except configparser.Error as e:
+                from api.logger import logger
+                logger.error(f"配置文件解析失败 {file_path}: {e}")
+                raise
 
             username = config.get("common", "username", fallback=acc_id)
             results.append({

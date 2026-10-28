@@ -1,0 +1,11 @@
+services:
+  chaoxing:
+    build: .
+    container_name: chaoxing-webui
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./accounts:/app/accounts
+      - ./config.ini:/config/config.ini
+    command: ["--webui"]

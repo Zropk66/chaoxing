@@ -1591,12 +1591,9 @@ class TikuManual(Tiku):
         self._safe_close_tqdm_bars()
 
         with self._manual_lock:
-            try:
-                from api.task_runner import TaskStateHub
-                if TaskStateHub().is_web_mode():
-                    return [self._single_query(q) for q in q_list]
-            except Exception:
-                pass
+            from api.task_runner import TaskStateHub
+            if TaskStateHub().is_web_mode():
+                return [self._single_query(q) for q in q_list]
             print(f"\n{'=' * 20} 手动输入题库 (共 {len(q_list)} 题) {'=' * 20}")
             if self.default_mode == 'batch':
                 ans_list = self._batch_query_flow(q_list)
@@ -1616,35 +1613,31 @@ class TikuManual(Tiku):
         return type_map.get(type_str, '其他类型')
 
     def _single_query(self, q: dict) -> Optional[str]:
-        try:
-            from api.task_runner import TaskStateHub
-            if TaskStateHub().is_web_mode():
-                type_str = self._get_type_display(q.get("type", ""))
-                options_list = []
-                options = q.get("options")
-                if isinstance(options, str):
-                    options_list = [o.strip() for o in options.split("\n") if o.strip()]
-                    if len(options_list) <= 1:
-                        from api.answer_check import cut
-                        cut_parts = cut(options)
-                        if cut_parts:
-                            options_list = cut_parts
-                elif isinstance(options, list):
-                    options_list = [str(o).strip() for o in options if str(o).strip()]
+        from api.task_runner import TaskStateHub
+        if TaskStateHub().is_web_mode():
+            type_str = self._get_type_display(q.get("type", ""))
+            options_list = []
+            options = q.get("options")
+            if isinstance(options, str):
+                options_list = [o.strip() for o in options.split("\n") if o.strip()]
+                if len(options_list) <= 1:
+                    from api.answer_check import cut
+                    cut_parts = cut(options)
+                    if cut_parts:
+                        options_list = cut_parts
+            elif isinstance(options, list):
+                options_list = [str(o).strip() for o in options if str(o).strip()]
 
-                prompt_data = {
-                    "title": q.get("title", ""),
-                    "type": q.get("type", ""),
-                    "type_display": type_str,
-                    "options": options_list,
-                }
-                ans = TaskStateHub().request_manual_answer(prompt_data)
-                if not ans:
-                    return None
-                return self._normalize_user_input(ans, q)
-        except Exception as e:
-            logger.debug(f"Web 模式手动答题异常，安全返回空答案: {e}")
-            return None
+            prompt_data = {
+                "title": q.get("title", ""),
+                "type": q.get("type", ""),
+                "type_display": type_str,
+                "options": options_list,
+            }
+            ans = TaskStateHub().request_manual_answer(prompt_data)
+            if not ans:
+                return None
+            return self._normalize_user_input(ans, q)
 
         type_str = self._get_type_display(q['type'])
         if q['type'] in ['single', 'multiple'] and q.get('options'):

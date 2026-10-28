@@ -80,8 +80,8 @@ class ChaoXingQRManager:
                 return {"status": "EXPIRED"}
             else:
                 return {"status": "PENDING"}
-        except Exception:
-            return {"status": "PENDING"}
+        except Exception as e:
+            return {"status": "ERROR", "msg": str(e)}
 
     def login_with_password(self, username: str, password: str) -> dict:
         session = requests.Session()

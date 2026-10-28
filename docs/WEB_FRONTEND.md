@@ -474,3 +474,25 @@ data: {"prompt_id": "prompt-uuid", "course": "计算机网络", "chapter": "3.1 
 event: MANUAL_QUESTION_RESOLVED
 data: {"prompt_id": "prompt-uuid", "status": "ANSWERED"}
 ```
+
+## Docker 容器化部署
+
+### 容器镜像构建与端口映射
+
+项目内置轻量容器化配置文件。使用 Docker 构建镜像并在宿主机映射 5000 端口：
+
+```bash
+docker build -t chaoxing .
+docker run -d -p 5000:5000 -v ./accounts:/app/accounts chaoxing --webui
+```
+
+### Docker Compose 一键拉起
+
+通过项目根目录下的 docker-compose.yml 服务编排文件，执行后台启动：
+
+```bash
+docker compose up -d
+```
+
+容器启动后，在宿主机浏览器访问 `http://localhost:5000` 即可进入 Web 控制台。多账号配置文件自动持久化落盘至宿主机的 accounts 目录中。
+
