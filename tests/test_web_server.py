@@ -41,3 +41,10 @@ class TestWebServer(unittest.TestCase):
 
         resp_skip = self.client.post("/api/manual/skip", json={"prompt_id": "non_exist"})
         self.assertIn(resp_skip.status_code, [200, 404])
+
+    def test_task_control_api(self):
+        resp_start = self.client.post("/api/task/start")
+        self.assertIn(resp_start.status_code, [400, 409])
+
+        resp_stop = self.client.post("/api/task/stop")
+        self.assertEqual(resp_stop.status_code, 200)

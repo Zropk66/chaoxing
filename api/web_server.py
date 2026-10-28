@@ -113,9 +113,8 @@ def create_app(test_config: Optional[dict] = None) -> Flask:
         if cookies_str:
             try:
                 from api.base import Chaoxing, Account
-                from api.answer import Tiku
                 account = Account(active.get("username", ""), "")
-                cx = Chaoxing(account=account, tiku=Tiku())
+                cx = Chaoxing(account=account)
                 cookie_dict = {}
                 for item in cookies_str.split(";"):
                     if "=" in item:
@@ -182,6 +181,39 @@ def create_app(test_config: Optional[dict] = None) -> Flask:
     @app.route("/api/status", methods=["GET"])
     def get_status():
         return jsonify(hub.get_snapshot())
+
+    @app.route("/api/task/start", methods=["POST"])
+    def start_task():
+        active = account_mgr.get_active_account()
+        if not active:
+            return jsonify({"status": "error", "msg": "未选择或未登录账号"}), 400
+
+        cfg_mgr = get_active_config_manager()
+        full_cfg = cfg_mgr.get_full_config()
+        course_list = cfg_mgr.get_course_list()
+        if not course_list:
+            return jsonify({"status": "error", "msg": "未勾选任何课程，请先在左侧选择并保存课程"}), 400
+
+        common_config = full_cfg.get("common", {})
+        common_config["course_list"] = course_list
+        common_config["username"] = active.get("username", "")
+        common_config["cookies"] = active.get("cookies", "")
+        common_config["use_cookies"] = True
+        tiku_config = full_cfg.get("tiku", {})
+        notification_config = full_cfg.get("notification", {})
+        config_path = active.get("path")
+
+        from main import start_study_task
+        started = start_study_task(common_config, tiku_config, notification_config, config_path)
+        if not started:
+            return jsonify({"status": "error", "msg": "任务已在运行中"}), 409
+        return jsonify({"status": "success"})
+
+    @app.route("/api/task/stop", methods=["POST"])
+    def stop_task():
+        from main import stop_study_task
+        stopped = stop_study_task()
+        return jsonify({"status": "success" if stopped else "not_running"})
 
     @app.route("/api/manual/pending", methods=["GET"])
     def get_manual_pending():

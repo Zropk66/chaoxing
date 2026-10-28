@@ -49,9 +49,17 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
             课程任务列表
           </div>
-          <button class="btn btn-primary" onclick="saveSelectedCourses()">
-            保存勾选配置
-          </button>
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-secondary" onclick="saveSelectedCourses()">
+              保存勾选
+            </button>
+            <button class="btn btn-primary" id="btnTaskStart" onclick="startStudyTask()">
+              开始任务
+            </button>
+            <button class="btn btn-secondary" id="btnTaskStop" style="display: none; background: var(--accent-danger); border-color: var(--accent-danger);" onclick="stopStudyTask()">
+              停止任务
+            </button>
+          </div>
         </div>
         <div class="filter-toolbar">
           <div class="search-input-wrap">

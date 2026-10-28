@@ -400,6 +400,8 @@ class JobProcessor:
             match task.result:
                 case ChapterResult.SUCCESS:
                     logger.debug("Task success: {} - {}", task.course["title"], task.point["title"])
+                    from api.task_runner import TaskStateHub
+                    TaskStateHub().increment_completed_jobs()
                     self.task_queue.task_done()
                     logger.debug(f"unfinished task: {self.task_queue.unfinished_tasks}")
 
@@ -553,6 +555,72 @@ def format_time(num, suffix='', divisor=''):
         return f"{hrs:02d}:{mins:02d}:{sec:02d}"
 
     return f"{mins:02d}:{sec:02d}"
+
+
+_current_study_thread = None
+_current_study_processor = None
+_is_task_running = False
+_task_run_lock = threading.Lock()
+
+
+def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any], notification_config: dict[str, Any], config_path: str = None) -> bool:
+    global _current_study_thread, _is_task_running
+    with _task_run_lock:
+        if _is_task_running:
+            return False
+        _is_task_running = True
+
+    def runner():
+        global _is_task_running, _current_study_processor
+        try:
+            common_config["speed"] = min(2.0, max(1.0, float(common_config.get("speed", 1.0))))
+            common_config["notopen_action"] = common_config.get("notopen_action", "retry")
+            chaoxing = init_chaoxing(common_config, tiku_config, config_path=config_path)
+
+            all_course = chaoxing.get_course_list()
+            course_task = filter_courses(all_course, common_config.get("course_list"))
+            logger.info(f"课程列表过滤完毕，当前任务课程数量: {len(course_task)}")
+
+            tasks = []
+            for course in course_task:
+                logger.info(f"正在读取课程章节: {course['title']}")
+                point_list = chaoxing.get_course_point(
+                    course["courseId"], course["clazzId"], course["cpi"]
+                )
+                for i, point in enumerate(point_list["points"]):
+                    tasks.append(ChapterTask(point=point, index=i, course=course))
+
+            from api.task_runner import TaskStateHub
+            hub = TaskStateHub()
+            hub.set_total_jobs(len(tasks))
+
+            p = JobProcessor(chaoxing, tasks, common_config)
+            _current_study_processor = p
+            p.run()
+            logger.info("所有课程学习任务已完成")
+        except Exception as e:
+            logger.error(f"自动化刷课执行异常: {e}")
+        finally:
+            with _task_run_lock:
+                _is_task_running = False
+                _current_study_processor = None
+
+    _current_study_thread = threading.Thread(target=runner, daemon=True)
+    _current_study_thread.start()
+    return True
+
+
+def stop_study_task() -> bool:
+    global _is_task_running, _current_study_processor
+    with _task_run_lock:
+        if not _is_task_running or not _current_study_processor:
+            return False
+        try:
+            _current_study_processor.task_queue.shutdown(immediate=True)
+        except Exception:
+            pass
+        _is_task_running = False
+        return True
 
 
 def main():

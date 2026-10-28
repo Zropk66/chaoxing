@@ -274,6 +274,36 @@ async function saveSelectedCourses() {
   }
 }
 
+async function startStudyTask() {
+  try {
+    const res = await API.startTask();
+    if (res.status === 'success') {
+      pushToast('刷课任务已在后台启动');
+      const btnStart = document.getElementById('btnTaskStart');
+      const btnStop = document.getElementById('btnTaskStop');
+      if (btnStart) btnStart.style.display = 'none';
+      if (btnStop) btnStop.style.display = 'inline-flex';
+    } else {
+      pushToast(`启动失败: ${res.msg || '未知原因'}`, 'error');
+    }
+  } catch (e) {
+    pushToast('发起任务请求异常', 'error');
+  }
+}
+
+async function stopStudyTask() {
+  try {
+    await API.stopTask();
+    pushToast('已发送停止任务信号');
+    const btnStart = document.getElementById('btnTaskStart');
+    const btnStop = document.getElementById('btnTaskStop');
+    if (btnStart) btnStart.style.display = 'inline-flex';
+    if (btnStop) btnStop.style.display = 'none';
+  } catch (e) {
+    pushToast('停止任务请求异常', 'error');
+  }
+}
+
 async function openSettingsModal() {
   const modal = document.getElementById('settingsModalOverlay');
   if (!modal) return;

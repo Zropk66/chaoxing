@@ -60,6 +60,16 @@ const API = {
     return res.json();
   },
 
+  async startTask() {
+    const res = await fetch('/api/task/start', { method: 'POST' });
+    return res.json();
+  },
+
+  async stopTask() {
+    const res = await fetch('/api/task/stop', { method: 'POST' });
+    return res.json();
+  },
+
   async setGlobalSpeed(speed) {
     const res = await fetch('/api/speed/global', {
       method: 'POST',
