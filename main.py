@@ -328,13 +328,15 @@ def process_job(chaoxing: Chaoxing, course: dict, job: dict, job_info: dict, spe
             live = Live(
                 attachment=job,
                 defaults=defaults,
-                course_id=course.get("courseId")
+                course_id=course.get("courseId"),
+                session=chaoxing.get_session(),
             )
 
             # 启动直播处理线程
             thread = threading.Thread(
                 target=LiveProcessor.run_live,
                 args=(live, speed),
+                kwargs={"course_title": course.get("title", "")},
                 daemon=True
             )
             thread.start()
