@@ -21,6 +21,8 @@ class TaskStateHub:
     def _init_hub(self) -> None:
         self._lock = threading.Lock()
         self._web_mode = False
+        self._is_task_running = False
+        self._last_status_broadcast = 0.0
         self._global_speed = 1.0
         self._worker_speeds: dict[str, float] = {}
         self._workers: dict[str, dict[str, Any]] = {}
@@ -70,13 +72,51 @@ class TaskStateHub:
             worker_copy = dict(self._workers[worker_id])
         self.broadcast_event("WORKER_UPDATE", worker_copy)
 
+    def remove_worker(self, worker_id: str) -> None:
+        """从看板中移除已结束的视频播放工作线程."""
+        with self._lock:
+            self._workers.pop(worker_id, None)
+        self.broadcast_event("WORKER_REMOVED", {"id": worker_id})
+        self.broadcast_event("STATUS_UPDATE", self.get_snapshot())
+
+    def clear_workers(self) -> None:
+        """任务结束时清空工作线程状态并广播更新."""
+        with self._lock:
+            self._workers.clear()
+        self.broadcast_event("STATUS_UPDATE", self.get_snapshot())
+
+    def set_task_running(self, running: bool) -> None:
+        """更新全局任务运行态并在结束时通知前端."""
+        with self._lock:
+            self._is_task_running = running
+            if running:
+                self._overall_stats["start_time"] = time.time()
+                self._overall_stats["completed_jobs"] = 0
+                self._overall_stats["total_jobs"] = 0
+                self._overall_stats["passed_tests"] = 0
+        self.broadcast_event("STATUS_UPDATE", self.get_snapshot())
+        if not running:
+            self.broadcast_event("TASK_FINISHED", {"status": "finished"})
+
+    def is_task_running(self) -> bool:
+        with self._lock:
+            return self._is_task_running
+
     def set_total_jobs(self, total: int) -> None:
         with self._lock:
             self._overall_stats["total_jobs"] = total
+        self.broadcast_event("STATUS_UPDATE", self.get_snapshot())
 
     def increment_completed_jobs(self) -> None:
+        should_broadcast = False
         with self._lock:
             self._overall_stats["completed_jobs"] += 1
+            now = time.time()
+            if now - self._last_status_broadcast >= 0.25 or self._overall_stats["completed_jobs"] >= self._overall_stats["total_jobs"]:
+                self._last_status_broadcast = now
+                should_broadcast = True
+        if should_broadcast:
+            self.broadcast_event("STATUS_UPDATE", self.get_snapshot())
 
     def increment_passed_tests(self) -> None:
         with self._lock:
@@ -100,6 +140,7 @@ class TaskStateHub:
             total = self._overall_stats["total_jobs"]
             progress = round((completed / total * 100), 1) if total > 0 else 0.0
             return {
+                "is_running": self._is_task_running,
                 "overall_progress": progress,
                 "completed_jobs": completed,
                 "total_jobs": total,
@@ -170,7 +211,7 @@ class TaskStateHub:
             return results
 
     def subscribe_events(self) -> queue.Queue:
-        q: queue.Queue = queue.Queue(maxsize=100)
+        q: queue.Queue = queue.Queue(maxsize=2000)
         with self._lock:
             self._listeners.append(q)
         return q
@@ -183,12 +224,13 @@ class TaskStateHub:
     def broadcast_event(self, event_type: str, data: dict[str, Any]) -> None:
         msg = {"event": event_type, "data": data}
         with self._lock:
-            dead_queues = []
-            for q in self._listeners:
+            for q in list(self._listeners):
                 try:
                     q.put_nowait(msg)
                 except queue.Full:
-                    dead_queues.append(q)
-            for dq in dead_queues:
-                if dq in self._listeners:
-                    self._listeners.remove(dq)
+                    # 队列满时丢弃最旧数据包，避免并发日志洪峰中断 SSE 连接
+                    try:
+                        q.get_nowait()
+                        q.put_nowait(msg)
+                    except Exception:
+                        pass

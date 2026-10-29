@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
 import argparse
 import configparser
 import enum
+import os
 import sys
 import threading
 import time
@@ -73,6 +73,10 @@ def parse_args(args=None):
 
     parser.add_argument(
         "--webui", action="store_true", help="启动本地 Web 控制台服务"
+    )
+    parser.add_argument(
+        "--host", type=str, default=os.environ.get("HOST", "127.0.0.1"),
+        help="Web 控制台服务监听地址 (默认 127.0.0.1)"
     )
     parser.add_argument(
         "--port", type=int, default=5000, help="Web 控制台服务端口 (默认 5000)"
@@ -249,24 +253,22 @@ def init_chaoxing(common_config, tiku_config, config_path=None):
     provider = tiku_config.get('provider', '')
     provider_list = [name.strip() for name in provider.split(',') if name.strip()]
     if any(name in ['AI', 'SiliconFlow'] for name in provider_list):
-        check_connection = tiku_config.get('check_llm_connection', 'true').lower() == 'true'
+        check_connection = str_to_bool(tiku_config.get('check_llm_connection', True))
         if check_connection:
             logger.info(f'正在验证大模型配置 (provider={provider})...')
             if not tiku.check_llm_connection():
                 logger.error('大模型连接检查失败')
+                from api.task_runner import TaskStateHub
+                if TaskStateHub().is_web_mode():
+                    raise RuntimeError(f"大模型连接检查失败 (provider={provider})，请检查相关 Endpoint、API Key 及 Model 配置")
                 choice = input('大模型连接检查失败，无法准确答题，是否继续运行？(Y/n): ').strip().lower()
-                # 直接回车默认继续运行
                 if choice not in ('', 'y', 'yes'):
                     raise RuntimeError('用户取消运行')
                 logger.info('用户选择继续运行...')
 
-    query_delay = tiku_config.get("delay", 0)
-
-    # 章节检测答错后允许的最大重做次数（答错时反馈给AI并重新提交，直到全部正确）
-    work_max_retries = common_config.get("work_max_retries", 3)
-
-    # 是否允许自动重做(默认false: 仅检查并记录成绩, 适用于只允许作答一次的课程)
-    work_redo_enabled = common_config.get("work_redo_enabled", False)
+    query_delay = float(tiku_config.get("delay", 0))
+    work_max_retries = int(common_config.get("work_max_retries", 3))
+    work_redo_enabled = str_to_bool(common_config.get("work_redo_enabled", False))
 
     # 实例化超星API
     chaoxing = Chaoxing(
@@ -340,6 +342,9 @@ def process_job(chaoxing: Chaoxing, course: dict, job: dict, job_info: dict, spe
         except Exception as e:
             logger.error(f"处理直播任务时出错: {str(e)}")
             return StudyResult.ERROR
+    elif job["type"] == "topic":
+        logger.trace(f"识别到话题讨论任务, 任务章节: {course['title']} 话题: {job['title']}")
+        return chaoxing.study_topic(course, job, job_info)
 
     logger.error(f"未知任务类型: {job['type']}")
     return StudyResult.ERROR
@@ -384,7 +389,7 @@ class JobProcessor:
             self.task_queue.put(task)
 
         for i in range(self.worker_num):
-            thread = threading.Thread(target=self.worker_thread, daemon=True)
+            thread = threading.Thread(target=self.worker_thread, name=f"Worker-{i+1}", daemon=True)
             self.threads.append(thread)
             thread.start()
 
@@ -525,6 +530,11 @@ def process_course(chaoxing: Chaoxing, course: dict[str, Any], config: dict):
 def filter_courses(all_course, course_list):
     """过滤要学习的课程"""
     if not course_list:
+        from api.task_runner import TaskStateHub
+        if TaskStateHub().is_web_mode():
+            ongoing = [c for c in all_course if not c.get("is_ended")]
+            return ongoing if ongoing else list(all_course)
+
         # 手动输入要学习的课程ID列表
         print("*" * 10 + "课程列表" + "*" * 10)
         for course in all_course:
@@ -578,6 +588,8 @@ def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any],
         if _is_task_running:
             return False
         _is_task_running = True
+    from api.task_runner import TaskStateHub
+    TaskStateHub().set_task_running(True)
 
     def runner():
         global _is_task_running, _current_study_processor
@@ -585,6 +597,9 @@ def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any],
             common_config["speed"] = min(2.0, max(1.0, float(common_config.get("speed", 1.0))))
             common_config["notopen_action"] = common_config.get("notopen_action", "retry")
             chaoxing = init_chaoxing(common_config, tiku_config, config_path=config_path)
+            _login_state = chaoxing.login(login_with_cookies=common_config.get("use_cookies", False))
+            if not _login_state.get("status"):
+                raise LoginError(str(_login_state.get("msg", "登录校验失败")))
 
             all_course = chaoxing.get_course_list()
             course_task = filter_courses(all_course, common_config.get("course_list"))
@@ -613,6 +628,9 @@ def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any],
             with _task_run_lock:
                 _is_task_running = False
                 _current_study_processor = None
+            from api.task_runner import TaskStateHub
+            TaskStateHub().clear_workers()
+            TaskStateHub().set_task_running(False)
 
     _current_study_thread = threading.Thread(target=runner, daemon=True)
     _current_study_thread.start()
@@ -629,6 +647,10 @@ def stop_study_task() -> bool:
         except Exception:
             pass
         _is_task_running = False
+        _current_study_processor = None
+        from api.task_runner import TaskStateHub
+        TaskStateHub().clear_workers()
+        TaskStateHub().set_task_running(False)
         return True
 
 
@@ -637,16 +659,15 @@ def main():
     try:
         args = parse_args()
         if args.webui:
-            import webbrowser
+            from api.logger import setup_webui_logging
+            setup_webui_logging()
+
             from api.web_server import create_app
+            host = args.host
             port = args.port
             app = create_app()
-            logger.info(f"正在启动 Web 控制台: http://0.0.0.0:{port}")
-            try:
-                webbrowser.open(f"http://127.0.0.1:{port}")
-            except Exception as e:
-                logger.warning(f"无法自动拉起浏览器，请手动访问: {e}")
-            app.run(host="0.0.0.0", port=port, debug=False)
+            print(f"Web 控制台已在后台运行，请通过浏览器访问: http://{host}:{port}")
+            app.run(host=host, port=port, debug=False)
             return
 
         # 初始化配置

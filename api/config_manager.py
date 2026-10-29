@@ -10,12 +10,13 @@ class ConfigManager:
     BOOL_KEYS = {
         "use_cookies", "work_redo_enabled", "add_learning_count",
         "check_llm_connection", "submit", "likeapi_search",
-        "likeapi_vision", "likeapi_retry"
+        "likeapi_vision", "likeapi_retry", "topic_auto_reply"
     }
 
     INT_KEYS = {
         "jobs", "work_max_retries", "target_count",
-        "likeapi_retry_times", "go_retry_times", "min_interval_seconds"
+        "likeapi_retry_times", "go_retry_times", "min_interval_seconds",
+        "daily_watch_limit_minutes"
     }
 
     FLOAT_KEYS = {

@@ -32,8 +32,15 @@ const API = {
     return res.json();
   },
 
-  async fetchCourses() {
-    const res = await fetch('/api/courses');
+  async fetchCourses(refresh = false) {
+    const url = refresh ? '/api/courses?refresh=true' : '/api/courses';
+    const res = await fetch(url);
+    return res.json();
+  },
+
+  async fetchCourseProgress(refresh = false) {
+    const url = refresh ? '/api/courses/progress?refresh=true' : '/api/courses/progress';
+    const res = await fetch(url);
     return res.json();
   },
 
@@ -60,8 +67,13 @@ const API = {
     return res.json();
   },
 
-  async startTask() {
-    const res = await fetch('/api/task/start', { method: 'POST' });
+  async startTask(courseList = null) {
+    const payload = courseList !== null ? { course_list: courseList } : {};
+    const res = await fetch('/api/task/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
     return res.json();
   },
 
@@ -112,6 +124,20 @@ const API = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt_id: promptId })
+    });
+    return res.json();
+  },
+
+  async fetchLogLevel() {
+    const res = await fetch('/api/log/level');
+    return res.json();
+  },
+
+  async setLogLevel(level) {
+    const res = await fetch('/api/log/level', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ level })
     });
     return res.json();
   }

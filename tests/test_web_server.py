@@ -1,4 +1,5 @@
 import unittest
+
 from api.web_server import create_app
 
 
@@ -26,6 +27,15 @@ class TestWebServer(unittest.TestCase):
         resp_status = self.client.get("/api/status")
         self.assertEqual(resp_status.status_code, 200)
 
+        resp_courses = self.client.get("/api/courses")
+        self.assertEqual(resp_courses.status_code, 200)
+        self.assertIn("courses", resp_courses.get_json())
+        self.assertIn("selected_ids", resp_courses.get_json())
+
+        resp_prog = self.client.get("/api/courses/progress")
+        self.assertEqual(resp_prog.status_code, 200)
+        self.assertIn("progress", resp_prog.get_json())
+
     def test_speed_api(self):
         resp = self.client.post("/api/speed/global", json={"speed": 1.5})
         self.assertEqual(resp.status_code, 200)
@@ -44,7 +54,19 @@ class TestWebServer(unittest.TestCase):
 
     def test_task_control_api(self):
         resp_start = self.client.post("/api/task/start")
-        self.assertIn(resp_start.status_code, [400, 409])
+        self.assertIn(resp_start.status_code, [200, 400, 409])
 
         resp_stop = self.client.post("/api/task/stop")
         self.assertEqual(resp_stop.status_code, 200)
+
+    def test_log_level_api(self):
+        resp = self.client.get("/api/log/level")
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("level", resp.get_json())
+
+        resp_post = self.client.post("/api/log/level", json={"level": "DEBUG"})
+        self.assertEqual(resp_post.status_code, 200)
+        self.assertEqual(resp_post.get_json()["level"], "DEBUG")
+
+        resp_inv = self.client.post("/api/log/level", json={"level": "INVALID"})
+        self.assertEqual(resp_inv.status_code, 400)

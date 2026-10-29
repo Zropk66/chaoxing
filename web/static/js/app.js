@@ -18,6 +18,38 @@ function pushToast(message, type = 'info') {
   }, 3500);
 }
 
+let isLogPinnedToBottom = true;
+
+function initLogScrollHandler() {
+  const consoleEl = document.getElementById('logConsole');
+  const scrollBtn = document.getElementById('btnScrollBottom');
+  if (!consoleEl) return;
+
+  consoleEl.addEventListener('scroll', () => {
+    const distanceFromBottom = consoleEl.scrollHeight - consoleEl.scrollTop - consoleEl.clientHeight;
+    if (distanceFromBottom <= 30) {
+      isLogPinnedToBottom = true;
+      if (scrollBtn) scrollBtn.classList.remove('visible');
+    } else {
+      isLogPinnedToBottom = false;
+      if (distanceFromBottom > 80) {
+        if (scrollBtn) scrollBtn.classList.add('visible');
+      } else {
+        if (scrollBtn) scrollBtn.classList.remove('visible');
+      }
+    }
+  });
+}
+
+function scrollToLogBottom() {
+  const consoleEl = document.getElementById('logConsole');
+  const scrollBtn = document.getElementById('btnScrollBottom');
+  if (!consoleEl) return;
+  consoleEl.scrollTop = consoleEl.scrollHeight;
+  isLogPinnedToBottom = true;
+  if (scrollBtn) scrollBtn.classList.remove('visible');
+}
+
 function appendLog(timestamp, level, message) {
   const consoleEl = document.getElementById('logConsole');
   if (!consoleEl) return;
@@ -36,7 +68,12 @@ function appendLog(timestamp, level, message) {
   line.appendChild(levelSpan);
   line.appendChild(msgSpan);
   consoleEl.appendChild(line);
-  consoleEl.scrollTop = consoleEl.scrollHeight;
+  if (consoleEl.children.length > 500) {
+    consoleEl.removeChild(consoleEl.firstChild);
+  }
+  if (isLogPinnedToBottom) {
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
 }
 
 async function loadAccounts() {
@@ -102,7 +139,7 @@ function openLoginModal() {
   toggleAccountDropdown(false);
   const modal = document.getElementById('loginModalOverlay');
   if (modal) modal.classList.add('show');
-  switchLoginTab('QR');
+  startQrSession();
 }
 
 function closeLoginModal() {
@@ -115,27 +152,7 @@ function closeLoginModal() {
 }
 
 function switchLoginTab(tab) {
-  const tabQr = document.getElementById('tabContentQr');
-  const tabPwd = document.getElementById('tabContentPwd');
-  const btnQr = document.getElementById('tabBtnQr');
-  const btnPwd = document.getElementById('tabBtnPwd');
-
-  if (tab === 'QR') {
-    if (tabQr) tabQr.style.display = 'block';
-    if (tabPwd) tabPwd.style.display = 'none';
-    if (btnQr) btnQr.classList.add('active');
-    if (btnPwd) btnPwd.classList.remove('active');
-    startQrSession();
-  } else {
-    if (tabQr) tabQr.style.display = 'none';
-    if (tabPwd) tabPwd.style.display = 'block';
-    if (btnQr) btnQr.classList.remove('active');
-    if (btnPwd) btnPwd.classList.add('active');
-    if (qrPollTimer) {
-      clearInterval(qrPollTimer);
-      qrPollTimer = null;
-    }
-  }
+  // 左右分栏并存模式保留接口兼容
 }
 
 async function startQrSession() {
@@ -158,6 +175,7 @@ async function startQrSession() {
           pushToast('扫码登录成功');
           closeLoginModal();
           await loadAccounts();
+          await loadCourses(false);
         } else if (poll.status === 'EXPIRED') {
           clearInterval(qrPollTimer);
           if (tipEl) tipEl.textContent = '二维码已失效，点击重新加载';
@@ -180,6 +198,7 @@ async function handlePasswordLogin(e) {
       pushToast('密码登录成功');
       closeLoginModal();
       await loadAccounts();
+      await loadCourses(false);
     } else {
       pushToast(`登录失败: ${res.msg || '凭据错误'}`, 'error');
     }
@@ -188,16 +207,18 @@ async function handlePasswordLogin(e) {
   }
 }
 
-async function loadCourses() {
+async function loadCourses(isManual = false) {
   const tbody = document.getElementById('courseTableBody');
   if (!tbody) return;
+  if (isManual) pushToast('正在刷新课程列表...', 'info');
   tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-dim); padding: 2rem;">加载中...</td></tr>';
   try {
-    const res = await API.fetchCourses();
+    const res = await API.fetchCourses(isManual);
     const courses = res.courses || [];
     const selected = new Set(res.selected_ids || []);
     if (courses.length === 0) {
       tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--text-dim); padding: 2rem;">暂无课程或尚未载入会话凭据</td></tr>';
+      if (isManual) pushToast('未获取到课程，请检查账号是否已登录', 'warning');
       return;
     }
     tbody.innerHTML = '';
@@ -214,9 +235,20 @@ async function loadCourses() {
       cb.onchange = updateSelectedCount;
       tdCb.appendChild(cb);
 
+      tr.dataset.status = c.is_ended ? 'ENDED' : 'ACTIVE';
+
       const tdTitle = document.createElement('td');
       tdTitle.style.fontWeight = '500';
-      tdTitle.textContent = c.title || '-';
+      const titleSpan = document.createElement('span');
+      titleSpan.textContent = c.title || '-';
+      tdTitle.appendChild(titleSpan);
+
+      const statusBadge = document.createElement('span');
+      statusBadge.className = `badge ${c.is_ended ? 'badge-gray' : 'badge-blue'}`;
+      statusBadge.style.marginLeft = '0.5rem';
+      statusBadge.style.fontSize = '0.65rem';
+      statusBadge.textContent = c.status || (c.is_ended ? '已结课' : '进行中');
+      tdTitle.appendChild(statusBadge);
 
       const tdId = document.createElement('td');
       tdId.style.fontFamily = 'var(--font-mono)';
@@ -231,9 +263,15 @@ async function loadCourses() {
 
       const tdProg = document.createElement('td');
       const badge = document.createElement('span');
-      const pct = c.progress || 0;
-      badge.className = `badge ${pct >= 100 ? 'badge-green' : 'badge-blue'}`;
-      badge.textContent = `${pct}%`;
+      badge.id = `course_prog_${c.courseId}`;
+      const pct = c.progress;
+      const text = c.progress_text || (pct !== null && pct !== undefined ? `${pct}%` : '读取中...');
+      if (pct !== null && pct !== undefined) {
+        badge.className = `badge ${pct >= 100 ? 'badge-green' : (pct > 0 ? 'badge-blue' : 'badge-gray')}`;
+      } else {
+        badge.className = 'badge badge-gray';
+      }
+      badge.textContent = text;
       tdProg.appendChild(badge);
 
       tr.appendChild(tdCb);
@@ -245,9 +283,48 @@ async function loadCourses() {
       tbody.appendChild(tr);
     });
     updateSelectedCount();
+    if (isManual) pushToast(`课程列表已加载，共 ${courses.length} 门课程`);
+    loadCoursesProgress(isManual);
   } catch (e) {
     tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; color: var(--accent-danger); padding: 2rem;">获取课程失败</td></tr>';
+    if (isManual) pushToast('刷新课程列表失败，请查看日志', 'error');
   }
+}
+
+async function loadCoursesProgress(force = false) {
+  try {
+    const res = await API.fetchCourseProgress(force);
+    const map = res.progress || {};
+    Object.entries(map).forEach(([cid, data]) => {
+      const el = document.getElementById(`course_prog_${cid}`);
+      if (!el) return;
+      const pct = data.percent || 0;
+      el.className = `badge ${pct >= 100 ? 'badge-green' : (pct > 0 ? 'badge-blue' : 'badge-gray')}`;
+      el.textContent = data.text || `${pct}%`;
+    });
+  } catch (err) {
+    console.error('加载课程完成度失败', err);
+  }
+}
+
+let currentStatusFilter = 'ALL';
+
+function filterCourseStatus(status) {
+  currentStatusFilter = status;
+  document.getElementById('filterStatusAll')?.classList.toggle('active', status === 'ALL');
+  document.getElementById('filterStatusActive')?.classList.toggle('active', status === 'ACTIVE');
+  document.getElementById('filterStatusEnded')?.classList.toggle('active', status === 'ENDED');
+  applyCourseFilters();
+}
+
+function applyCourseFilters() {
+  const kw = document.getElementById('courseSearchInput')?.value.toLowerCase() || '';
+  document.querySelectorAll('#courseTableBody tr').forEach(tr => {
+    const matchesKw = tr.textContent.toLowerCase().includes(kw);
+    const trStatus = tr.dataset.status;
+    const matchesStatus = (currentStatusFilter === 'ALL') || (trStatus === currentStatusFilter);
+    tr.style.display = (matchesKw && matchesStatus) ? '' : 'none';
+  });
 }
 
 function updateSelectedCount() {
@@ -275,10 +352,16 @@ async function saveSelectedCourses() {
 }
 
 async function startStudyTask() {
+  const cbs = document.querySelectorAll('.course-cb:checked');
+  const checkedIds = Array.from(cbs).map(cb => cb.value);
   try {
-    const res = await API.startTask();
+    const res = await API.startTask(checkedIds);
     if (res.status === 'success') {
-      pushToast('刷课任务已在后台启动');
+      if (checkedIds.length === 0) {
+        pushToast('未单独勾选，默认全选进行中课程并启动任务');
+      } else {
+        pushToast(`已启动勾选的 ${checkedIds.length} 门课程任务`);
+      }
       const btnStart = document.getElementById('btnTaskStart');
       const btnStop = document.getElementById('btnTaskStop');
       if (btnStart) btnStart.style.display = 'none';
@@ -343,6 +426,7 @@ function populateSettingsForm(cfg) {
   setVal('cfg_work_max_retries', common.work_max_retries ?? 3);
   setCheck('cfg_add_learning_count', !!common.add_learning_count);
   setVal('cfg_target_count', common.target_count ?? 100);
+  setVal('cfg_daily_watch_limit_minutes', common.daily_watch_limit_minutes ?? 0);
 
   setVal('cfg_provider', tiku.provider ?? 'TikuYanxi');
   setCheck('cfg_submit', !!tiku.submit);
@@ -383,7 +467,8 @@ function readSettingsForm() {
       work_redo_enabled: getCheck('cfg_work_redo_enabled'),
       work_max_retries: parseInt(getVal('cfg_work_max_retries'), 10) || 3,
       add_learning_count: getCheck('cfg_add_learning_count'),
-      target_count: parseInt(getVal('cfg_target_count'), 10) || 100
+      target_count: parseInt(getVal('cfg_target_count'), 10) || 100,
+      daily_watch_limit_minutes: parseInt(getVal('cfg_daily_watch_limit_minutes'), 10) || 0
     },
     tiku: {
       provider: getVal('cfg_provider'),
@@ -563,53 +648,20 @@ function initSSE() {
   evtSource.addEventListener('WORKER_UPDATE', e => {
     try {
       const w = JSON.parse(e.data);
+      if (w.status !== 'PLAYING' && w.type !== 'video') return;
+      createOrUpdateWorkerCard(w);
+    } catch (err) {}
+  });
+
+  evtSource.addEventListener('WORKER_REMOVED', e => {
+    try {
+      const data = JSON.parse(e.data);
+      const card = document.getElementById(`worker_card_${data.id}`);
+      if (card) card.remove();
       const wContainer = document.getElementById('workersContainer');
-      if (!wContainer) return;
-      let card = document.getElementById(`worker_card_${w.id}`);
-      const pct = w.duration > 0 ? Math.min(100, Math.round((w.position / w.duration) * 100)) : 0;
-      if (!card) {
-        if (wContainer.textContent.includes('暂无活动工作线程')) {
-          wContainer.innerHTML = '';
-        }
-        card = document.createElement('div');
-        card.id = `worker_card_${w.id}`;
-        card.className = 'worker-card';
-        wContainer.appendChild(card);
+      if (wContainer && wContainer.children.length === 0) {
+        wContainer.innerHTML = '<div style="text-align: center; color: var(--text-dim); padding: 1rem;">暂无正在播放的视频</div>';
       }
-      card.innerHTML = '';
-      const header = document.createElement('div');
-      header.className = 'worker-header';
-      const title = document.createElement('div');
-      title.className = 'worker-title';
-      title.textContent = `${w.id}: ${w.chapter || '待命'}`;
-      const badge = document.createElement('span');
-      badge.className = `badge ${w.status === 'PLAYING' ? 'badge-blue' : 'badge-gray'}`;
-      badge.textContent = `${w.speed || 1.0}x`;
-      header.appendChild(title);
-      header.appendChild(badge);
-
-      const pbWrap = document.createElement('div');
-      pbWrap.className = 'progress-bar-wrap';
-      const pbFill = document.createElement('div');
-      pbFill.className = 'progress-fill';
-      pbFill.style.width = `${pct}%`;
-      pbWrap.appendChild(pbFill);
-
-      const footer = document.createElement('div');
-      footer.style.fontSize = '0.7rem';
-      footer.style.color = 'var(--text-dim)';
-      footer.style.display = 'flex';
-      footer.style.justifyContent = 'space-between';
-      const timeSpan = document.createElement('span');
-      timeSpan.textContent = `${w.position || 0}s / ${w.duration || 0}s`;
-      const pctSpan = document.createElement('span');
-      pctSpan.textContent = `${pct}%`;
-      footer.appendChild(timeSpan);
-      footer.appendChild(pctSpan);
-
-      card.appendChild(header);
-      card.appendChild(pbWrap);
-      card.appendChild(footer);
     } catch (err) {}
   });
 
@@ -623,6 +675,118 @@ function initSSE() {
   evtSource.addEventListener('MANUAL_QUESTION_RESOLVED', () => {
     closeManualQuizModal();
   });
+
+  evtSource.addEventListener('TASK_FINISHED', () => {
+    const btnStart = document.getElementById('btnTaskStart');
+    const btnStop = document.getElementById('btnTaskStop');
+    if (btnStart) btnStart.style.display = 'inline-flex';
+    if (btnStop) btnStop.style.display = 'none';
+    pushToast('所有课程学习任务已完成');
+    loadCoursesProgress(true);
+  });
+}
+
+function createOrUpdateWorkerCard(w) {
+  const wContainer = document.getElementById('workersContainer');
+  if (!wContainer) return;
+  if (wContainer.textContent.includes('暂无正在播放的视频') || wContainer.textContent.includes('暂无活动工作线程')) {
+    wContainer.innerHTML = '';
+  }
+  let card = document.getElementById(`worker_card_${w.id}`);
+  const pct = w.duration > 0 ? Math.min(100, Math.round((w.position / w.duration) * 100)) : 0;
+  const currentSpeed = parseFloat(w.speed || 1.0);
+
+  if (!card) {
+    card = document.createElement('div');
+    card.id = `worker_card_${w.id}`;
+    card.className = 'worker-card';
+
+    const header = document.createElement('div');
+    header.className = 'worker-header';
+
+    const title = document.createElement('div');
+    title.className = 'worker-title';
+    title.id = `worker_title_${w.id}`;
+
+    const speedWrap = document.createElement('div');
+    speedWrap.style.cssText = 'display: flex; align-items: center; gap: 0.35rem;';
+
+    const spLabel = document.createElement('span');
+    spLabel.style.cssText = 'font-size: 0.7rem; color: var(--text-dim);';
+    spLabel.textContent = '倍速:';
+
+    const slider = document.createElement('input');
+    slider.type = 'range';
+    slider.min = '1.0';
+    slider.max = '2.0';
+    slider.step = '0.1';
+    slider.id = `worker_slider_${w.id}`;
+    slider.style.cssText = 'width: 60px; height: 3px; accent-color: var(--accent-primary); cursor: pointer;';
+
+    const speedVal = document.createElement('span');
+    speedVal.id = `worker_speed_val_${w.id}`;
+    speedVal.style.cssText = 'font-size: 0.72rem; font-family: var(--font-mono); color: var(--accent-primary); width: 28px; text-align: right;';
+
+    slider.addEventListener('input', e => {
+      const v = parseFloat(e.target.value);
+      speedVal.textContent = `${v.toFixed(1)}x`;
+    });
+    slider.addEventListener('change', async e => {
+      const newSp = parseFloat(e.target.value);
+      speedVal.textContent = `${newSp.toFixed(1)}x`;
+      await API.setWorkerSpeed(w.id, newSp);
+      pushToast(`${w.id} 视频倍速已设为 ${newSp.toFixed(1)}x`);
+    });
+
+    speedWrap.appendChild(spLabel);
+    speedWrap.appendChild(slider);
+    speedWrap.appendChild(speedVal);
+    header.appendChild(title);
+    header.appendChild(speedWrap);
+
+    const pbWrap = document.createElement('div');
+    pbWrap.className = 'progress-bar-wrap';
+    const pbFill = document.createElement('div');
+    pbFill.className = 'progress-fill';
+    pbFill.id = `worker_fill_${w.id}`;
+    pbWrap.appendChild(pbFill);
+
+    const footer = document.createElement('div');
+    footer.style.cssText = 'font-size: 0.7rem; color: var(--text-dim); display: flex; justify-content: space-between;';
+    const timeSpan = document.createElement('span');
+    timeSpan.id = `worker_time_${w.id}`;
+    const pctSpan = document.createElement('span');
+    pctSpan.id = `worker_pct_${w.id}`;
+    footer.appendChild(timeSpan);
+    footer.appendChild(pctSpan);
+
+    card.appendChild(header);
+    card.appendChild(pbWrap);
+    card.appendChild(footer);
+    wContainer.appendChild(card);
+  }
+
+  const titleEl = document.getElementById(`worker_title_${w.id}`);
+  if (titleEl) {
+    titleEl.title = w.chapter || '视频播放中';
+    titleEl.textContent = `${w.id}: ${w.chapter || '视频播放中'}`;
+  }
+
+  const sliderEl = document.getElementById(`worker_slider_${w.id}`);
+  const speedValEl = document.getElementById(`worker_speed_val_${w.id}`);
+  if (sliderEl && document.activeElement !== sliderEl) {
+    sliderEl.value = currentSpeed.toFixed(1);
+    if (speedValEl) speedValEl.textContent = `${currentSpeed.toFixed(1)}x`;
+  }
+
+  const fillEl = document.getElementById(`worker_fill_${w.id}`);
+  if (fillEl) fillEl.style.width = `${pct}%`;
+
+  const timeEl = document.getElementById(`worker_time_${w.id}`);
+  if (timeEl) timeEl.textContent = `${w.position || 0}s / ${w.duration || 0}s`;
+
+  const pctEl = document.getElementById(`worker_pct_${w.id}`);
+  if (pctEl) pctEl.textContent = `${pct}%`;
 }
 
 function updateDashboardStats(data) {
@@ -630,77 +794,92 @@ function updateDashboardStats(data) {
   const tEl = document.getElementById('statTasks');
   const qEl = document.getElementById('statQuiz');
   const wContainer = document.getElementById('workersContainer');
+  const speedSlider = document.getElementById('globalSpeedSlider');
+  const speedValEl = document.getElementById('globalSpeedVal');
+  const btnStart = document.getElementById('btnTaskStart');
+  const btnStop = document.getElementById('btnTaskStop');
+
+  if (data.is_running !== undefined) {
+    if (data.is_running) {
+      if (btnStart) btnStart.style.display = 'none';
+      if (btnStop) btnStop.style.display = 'inline-flex';
+    } else {
+      if (btnStart) btnStart.style.display = 'inline-flex';
+      if (btnStop) btnStop.style.display = 'none';
+    }
+  }
 
   if (pEl) pEl.textContent = `${data.overall_progress || 0}%`;
   if (tEl) tEl.textContent = `${data.completed_jobs || 0} / ${data.total_jobs || 0}`;
   if (qEl) qEl.textContent = `${data.passed_tests || 0}`;
 
-  if (wContainer && data.workers) {
-    wContainer.innerHTML = '';
-    data.workers.forEach(w => {
-      const card = document.createElement('div');
-      card.className = 'worker-card';
-      const pct = w.duration > 0 ? Math.min(100, Math.round((w.position / w.duration) * 100)) : 0;
+  if (data.global_speed !== undefined) {
+    const sp = parseFloat(data.global_speed);
+    if (speedSlider && document.activeElement !== speedSlider) {
+      speedSlider.value = sp;
+    }
+    if (speedValEl) {
+      speedValEl.textContent = `${sp.toFixed(1)}x`;
+    }
+  }
 
-      const header = document.createElement('div');
-      header.className = 'worker-header';
-      const title = document.createElement('div');
-      title.className = 'worker-title';
-      title.textContent = `${w.id}: ${w.chapter || '待命'}`;
-      const badge = document.createElement('span');
-      badge.className = `badge ${w.status === 'PLAYING' ? 'badge-blue' : 'badge-gray'}`;
-      badge.textContent = `${w.speed || 1.0}x`;
-      header.appendChild(title);
-      header.appendChild(badge);
-
-      const pbWrap = document.createElement('div');
-      pbWrap.className = 'progress-bar-wrap';
-      const pbFill = document.createElement('div');
-      pbFill.className = 'progress-fill';
-      pbFill.style.width = `${pct}%`;
-      pbWrap.appendChild(pbFill);
-
-      const footer = document.createElement('div');
-      footer.style.fontSize = '0.7rem';
-      footer.style.color = 'var(--text-dim)';
-      footer.style.display = 'flex';
-      footer.style.justifyContent = 'space-between';
-      const timeSpan = document.createElement('span');
-      timeSpan.textContent = `${w.position || 0}s / ${w.duration || 0}s`;
-      const pctSpan = document.createElement('span');
-      pctSpan.textContent = `${pct}%`;
-      footer.appendChild(timeSpan);
-      footer.appendChild(pctSpan);
-
-      card.appendChild(header);
-      card.appendChild(pbWrap);
-      card.appendChild(footer);
-      wContainer.appendChild(card);
-    });
+  if (wContainer) {
+    const activeVideos = (data.workers || []).filter(w => w.status === 'PLAYING' || w.type === 'video');
+    if (activeVideos.length === 0) {
+      wContainer.innerHTML = '<div style="text-align: center; color: var(--text-dim); padding: 1rem;">暂无正在播放的视频</div>';
+    } else {
+      wContainer.innerHTML = '';
+      activeVideos.forEach(w => createOrUpdateWorkerCard(w));
+    }
   }
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
-  await loadAccounts();
-  await loadCourses();
+async function changeLogLevel(lvl) {
+  try {
+    const res = await API.setLogLevel(lvl);
+    if (res.status === 'success') {
+      pushToast(`控制台日志级别已切换为 ${res.level}`);
+    } else {
+      pushToast('切换日志级别失败', 'error');
+    }
+  } catch (e) {
+    pushToast('更新日志级别异常', 'error');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
   initSSE();
+  initLogScrollHandler();
+  API.fetchLogLevel().then(res => {
+    if (res && res.level) {
+      const el = document.getElementById('logLevelSelector');
+      if (el) el.value = res.level;
+    }
+  }).catch(() => {});
+
+  loadAccounts().then(() => {
+    loadCourses(false);
+  });
 
   const searchInput = document.getElementById('courseSearchInput');
   if (searchInput) {
-    searchInput.addEventListener('input', e => {
-      const kw = e.target.value.toLowerCase();
-      document.querySelectorAll('#courseTableBody tr').forEach(tr => {
-        tr.style.display = tr.textContent.toLowerCase().includes(kw) ? '' : 'none';
-      });
+    searchInput.addEventListener('input', () => {
+      applyCourseFilters();
     });
   }
 
   const speedSlider = document.getElementById('globalSpeedSlider');
+  const speedValEl = document.getElementById('globalSpeedVal');
   if (speedSlider) {
+    speedSlider.addEventListener('input', e => {
+      const sp = parseFloat(e.target.value);
+      if (speedValEl) speedValEl.textContent = `${sp.toFixed(1)}x`;
+    });
     speedSlider.addEventListener('change', async e => {
       const sp = parseFloat(e.target.value);
+      if (speedValEl) speedValEl.textContent = `${sp.toFixed(1)}x`;
       await API.setGlobalSpeed(sp);
-      pushToast(`全局倍速已更新为 ${sp}x`);
+      pushToast(`全局倍速已更新为 ${sp.toFixed(1)}x`);
     });
   }
 });

@@ -31,9 +31,15 @@ def decode_course_list(html_text: str) -> List[Dict[str, str]]:
     course_list = []
 
     for course in raw_courses:
-        # 跳过未开放课程
-        if course.select_one("a.not-open-tip") or course.select_one("div.not-open-tip"):
+        tip = course.select_one("a.not-open-tip, div.not-open-tip")
+        tip_text = tip.get_text(strip=True) if tip else ""
+        is_ended = bool(tip) and ("结束" in tip_text or "已结" in tip_text or "已结课" in tip_text)
+        if tip and not is_ended and "未开放" in tip_text:
             continue
+
+        cpi_match = re.findall(r"cpi=(.*?)&", course.select_one("a").attrs["href"])
+        cpi = cpi_match[0] if cpi_match else ""
+        title = course.select_one("span.course-name").attrs["title"] if course.select_one("span.course-name") else ""
 
         course_detail = {
             "id": course.attrs["id"],
@@ -41,14 +47,56 @@ def decode_course_list(html_text: str) -> List[Dict[str, str]]:
             "roleid": course.attrs["roleid"],
             "clazzId": course.select_one("input.clazzId").attrs["value"],
             "courseId": course.select_one("input.courseId").attrs["value"],
-            "cpi": re.findall(r"cpi=(.*?)&", course.select_one("a").attrs["href"])[0],
-            "title": course.select_one("span.course-name").attrs["title"],
+            "cpi": cpi,
+            "title": title,
             "desc": course.select_one("p.margint10").attrs["title"] if course.select_one("p.margint10") else "",
-            "teacher": course.select_one("p.color3").attrs["title"]
+            "teacher": course.select_one("p.color3").attrs["title"] if course.select_one("p.color3") else "",
+            "status": "已结课" if is_ended else "进行中",
+            "is_ended": is_ended,
         }
         course_list.append(course_detail)
 
     return course_list
+
+
+def decode_archived_courses(html_text: str) -> List[Dict[str, Any]]:
+    """解析归档已结课课程列表页面."""
+    soup = BeautifulSoup(html_text, "lxml")
+    raw_courses = soup.select(".course")
+    archived_list = []
+
+    for course in raw_courses:
+        name_el = course.select_one("span.course-name, .course-name")
+        clazz_input = course.select_one("input.clazzId, .clazzId")
+        course_input = course.select_one("input.courseId, .courseId")
+        if not name_el or not clazz_input or not course_input:
+            continue
+
+        title = name_el.attrs.get("title", name_el.get_text(strip=True))
+        clazz_id = clazz_input.attrs.get("value", "")
+        course_id = course_input.attrs.get("value", "")
+        link = course.select_one("a")
+        href = link.attrs.get("href", "") if link else ""
+        cpi_match = re.findall(r"cpi=(.*?)&", href)
+        cpi = cpi_match[0] if cpi_match else ""
+
+        teacher_el = course.select_one("p.color3")
+        desc_el = course.select_one("p.margint10")
+
+        archived_list.append({
+            "id": course.attrs.get("id", f"c_{course_id}"),
+            "info": course.attrs.get("info", ""),
+            "roleid": course.attrs.get("roleid", ""),
+            "clazzId": clazz_id,
+            "courseId": course_id,
+            "cpi": cpi,
+            "title": f"{title}(已归档)" if not title.endswith("(已归档)") else title,
+            "desc": desc_el.attrs.get("title") or (desc_el.get_text(strip=True) if desc_el else ""),
+            "teacher": teacher_el.attrs.get("title") or (teacher_el.get_text(strip=True) if teacher_el else ""),
+            "status": "已结课",
+            "is_ended": True,
+        })
+    return archived_list
 
 
 def decode_course_folder(html_text: str) -> List[Dict[str, str]]:
@@ -267,11 +315,25 @@ def _process_attachment_cards(cards: List[Dict[str, Any]]) -> List[Dict[str, Any
                 or property_data.get("vdoid") is not None
         )
 
+        is_topic = (
+            card_type in ("topic", "bbs", "discuss")
+            or prop_type in ("topic", "bbs", "discuss")
+            or resource_type in ("topic", "bbs", "discuss")
+            or "bbs" in property_data.get("module", "").lower()
+            or "topic" in property_data.get("module", "").lower()
+            or property_data.get("module") in ("topic", "bbs", "discuss", "insertbbs")
+            or property_data.get("topicId") is not None
+        )
+
         # 根据任务类型处理
         if is_live:
             live_job = _process_live_task(card)
             if live_job:
                 job_list.append(live_job)
+        elif is_topic:
+            topic_job = _process_topic_task(card)
+            if topic_job:
+                job_list.append(topic_job)
         elif card_type == "video":
             video_job = _process_video_task(card)
             if video_job:
@@ -289,6 +351,33 @@ def _process_attachment_cards(cards: List[Dict[str, Any]]) -> List[Dict[str, Any
             logger.warning(card)
 
     return job_list
+
+
+def _process_topic_task(card: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """提取话题回复讨论任务所需参数."""
+    try:
+        property_data = card.get("property", {})
+        topic_id = property_data.get("id") or property_data.get("topicId") or card.get("topicId", "")
+        topic_uuid = property_data.get("uuid") or card.get("uuid", "")
+        bbsid = property_data.get("bbsid") or property_data.get("bbsId") or card.get("bbsid", "")
+        title = property_data.get("title") or property_data.get("name") or card.get("title", "话题讨论")
+
+        return {
+            "type": "topic",
+            "jobid": card.get("jobid", str(card.get("id", ""))),
+            "title": title,
+            "topic_id": str(topic_id),
+            "topic_uuid": str(topic_uuid),
+            "bbsid": str(bbsid),
+            "content": property_data.get("content", ""),
+            "otherinfo": card.get("otherInfo", ""),
+            "property": property_data,
+            "mid": card.get("mid", ""),
+            "aid": card.get("aid", ""),
+        }
+    except Exception as e:
+        logger.error(f"解析话题任务失败: {e}")
+        return None
 
 
 def _process_live_task(card: Dict[str, Any]) -> Optional[Dict[str, Any]]:

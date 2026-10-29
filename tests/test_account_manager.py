@@ -35,3 +35,13 @@ class TestAccountManager(unittest.TestCase):
         mgr = AccountManager(accounts_dir=custom_dir)
         self.assertTrue(os.path.exists(custom_dir))
         shutil.rmtree(custom_dir)
+
+    def test_daily_watch_tracking(self):
+        self.assertEqual(self.manager.get_daily_watched_seconds("user1"), 0.0)
+        total = self.manager.add_daily_watched_seconds("user1", 120.5)
+        self.assertEqual(total, 120.5)
+        self.assertEqual(self.manager.get_daily_watched_seconds("user1"), 120.5)
+        total2 = self.manager.add_daily_watched_seconds("user1", 30.0)
+        self.assertEqual(total2, 150.5)
+        self.assertEqual(self.manager.get_daily_watched_seconds("user1"), 150.5)
+        self.assertEqual(self.manager.get_daily_watched_seconds("user2"), 0.0)

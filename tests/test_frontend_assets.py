@@ -22,3 +22,11 @@ class TestFrontendAssets(unittest.TestCase):
         self.assertIn("settingsModalOverlay", content)
         self.assertIn("manualQuizModalOverlay", content)
         self.assertIn("loginModalOverlay", content)
+        self.assertIn("btnScrollBottom", content)
+
+    def test_js_contains_scroll_pinning(self):
+        js_path = os.path.join("web", "static", "js", "app.js")
+        with open(js_path, "r", encoding="utf8") as f:
+            content = f.read()
+        self.assertIn("isLogPinnedToBottom", content)
+        self.assertIn("scrollToLogBottom", content)

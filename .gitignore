@@ -157,3 +157,5 @@ cache.json
 start*.bat
 .workbuddy/
 myConfig/
+accounts/
+.superpowers/

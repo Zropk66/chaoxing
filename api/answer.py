@@ -189,8 +189,8 @@ class Tiku(ABC):
         if not self._conf:
             self.config_set(self._get_conf())
         if not self.DISABLE:
-            # 设置提交模式
-            self.SUBMIT = True if self._conf['submit'] == 'true' else False
+            submit_val = self._conf.get("submit", False)
+            self.SUBMIT = submit_val if isinstance(submit_val, bool) else str(submit_val).strip().lower() in ("1", "true", "yes", "on")
             self.COVER_RATE = float(self._conf['cover_rate'])
             self.true_list = self._conf['true_list'].split(',')
             self.false_list = self._conf['false_list'].split(',')
@@ -332,27 +332,42 @@ class Tiku(ABC):
 
 
     def set_work_feedback(self, feedback) -> None:
-        """
-        设置上一轮章节检测的错误反馈，供支持反馈的大模型题库在重新作答时参考。
-
-        Args:
-            feedback: 错误反馈，可以是 str 或 list[str]（描述哪些题目答错、正确答案是什么）
-        """
+        """设置上一轮章节检测的错误反馈，供支持反馈的大模型题库在重新作答时参考."""
         pass
 
+    def generate_topic_reply(self, title: str, content: str = "") -> Optional[str]:
+        """使用配置的题库大模型为讨论话题生成回复内容."""
+        topic_desc = f"请针对课程讨论话题发表一段30-80字观点积极、言简意赅的学术讨论看法：{title}"
+        if content:
+            topic_desc += f"\n话题补充：{content}"
+        q_info = {
+            "title": topic_desc,
+            "type": "topic",
+            "options": ""
+        }
+        return self.query(q_info)
+
     def _query_all(self, q_list: list[dict], query_delay: float = 0.0) -> list[Optional[str]]:
-        """
-        批量查询的实现接口，默认循环调用单个查询 _query。
-        子类若有批量查询或交互需求（如手动模式），可重写此方法。
-        """
+        """批量循环查询各题目，实时推送题号进度避免用户感知卡顿."""
         results = []
-        for q in q_list:
+        total = len(q_list)
+        for i, q in enumerate(q_list):
             if query_delay > 0:
                 time.sleep(query_delay)
+            title_preview = str(q.get("title", "")).strip()[:24]
+            if not self._is_manual_mode:
+                logger.info(f"{self.name} 正在搜题 [{i + 1}/{total}]: {title_preview}...")
             try:
-                results.append(self._query(q))
+                ans = self._query(q)
+                if ans:
+                    if not self._is_manual_mode:
+                        logger.info(f"{self.name} 获取答案成功 [{i + 1}/{total}] -> {str(ans).strip()[:20]}")
+                else:
+                    if not self._is_manual_mode:
+                        logger.warning(f"{self.name} 未查询到答案 [{i + 1}/{total}]")
+                results.append(ans)
             except Exception as e:
-                logger.error(f"{self.name} 查询单个题目发生异常: {e}")
+                logger.error(f"{self.name} 查询题目异常 [{i + 1}/{total}]: {e}")
                 results.append(None)
         return results
 
@@ -1300,6 +1315,14 @@ class AI(Tiku):
                     f"题目：{q_info['title']}"
                 )
             ))
+        elif q_info['type'] == 'topic':
+            completion = client.chat.completions.create(**self._completion_kwargs(
+                model=self.model,
+                messages=_make_messages(
+                    "你是一个在校大学生，正在参与课程讨论区的话题研讨。请根据话题内容，发表一段30至80字的学术讨论回复，语言积极、观点鲜明、结合理论与实际。请以JSON格式输出，示例：{\"Answer\": [\"我认为该议题探讨深刻，理论联系实际，对核心问题把握精准...\"]}。不要输出任何多余内容，不要使用Markdown标记。",
+                    f"话题议题：{q_info['title']}"
+                )
+            ))
         else:
             completion = client.chat.completions.create(**self._completion_kwargs(
                 model=self.model,
@@ -1413,6 +1436,8 @@ class SiliconFlow(Tiku):
             system_prompt = "本题为填空题，请直接给出填空内容，以JSON格式输出：示例回答：{\"Answer\": [\"答案文本\"]}。除此之外不要输出任何多余的内容，也不要使用MD语法。如果你使用了互联网搜索，也请不要返回搜索的结果和参考资料"
         elif q_info['type'] == 'judgement':
             system_prompt = "本题为判断题，请回答'正确'或'错误'，以JSON格式输出：示例回答：{\"Answer\": [\"正确\"]}。除此之外不要输出任何多余的内容，也不要使用MD语法。如果你使用了互联网搜索，也请不要返回搜索的结果和参考资料"
+        elif q_info['type'] == 'topic':
+            system_prompt = "你是一个在校大学生，正在参与课程讨论区的话题研讨。请根据话题内容，发表一段30至80字的学术讨论回复，语言积极、观点鲜明、结合理论与实际。请以JSON格式输出，示例：{\"Answer\": [\"我认为该议题探讨深刻，理论联系实际，对核心问题把握精准...\"]}。不要输出任何多余内容，不要使用Markdown标记。"
 
         # 构造请求体
         payload = {

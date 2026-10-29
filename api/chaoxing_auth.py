@@ -1,6 +1,9 @@
+import base64
+import re
 import time
+
 import requests
-from typing import Optional
+
 from api.cipher import AESCipher
 from api.config import GlobalConst as gc
 
@@ -14,27 +17,44 @@ class ChaoXingQRManager:
 
     def create_session(self) -> dict:
         session = requests.Session()
-        session.headers.update(gc.HEADERS)
-        url = "https://passport2.chaoxing.com/createqr?type=1&shortUrl=1"
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9",
+        })
+        login_url = "https://passport2.chaoxing.com/login"
         try:
-            resp = session.get(url, timeout=5)
-            data = resp.json()
-            if data.get("status"):
-                uuid = data["uuid"]
-                enc = data["enc"]
-                qr_url = f"https://passport2.chaoxing.com/qr/showCode?uuid={uuid}"
-                self._sessions[uuid] = {
-                    "uuid": uuid,
-                    "enc": enc,
-                    "session": session,
-                    "created_at": time.time(),
-                }
-                return {
-                    "status": True,
-                    "session_id": uuid,
-                    "qr_url": qr_url,
-                }
-            return {"status": False, "msg": "获取二维码失败"}
+            resp = session.get(login_url, timeout=10)
+            if resp.status_code != 200:
+                return {"status": False, "msg": f"拉取登录页失败: HTTP {resp.status_code}"}
+
+            u_match = re.search(r'value="([^"]+)"\s+id="uuid"|id="uuid"\s+value="([^"]+)"', resp.text)
+            e_match = re.search(r'value="([^"]+)"\s+id="enc"|id="enc"\s+value="([^"]+)"', resp.text)
+            if not u_match or not e_match:
+                return {"status": False, "msg": "解析二维码参数失败"}
+
+            uuid = u_match.group(1) or u_match.group(2)
+            enc = e_match.group(1) or e_match.group(2)
+
+            qr_img_url = f"https://passport2.chaoxing.com/createqr?uuid={uuid}&fid=-1"
+            img_resp = session.get(qr_img_url, timeout=10)
+            if img_resp.status_code != 200 or not img_resp.content:
+                return {"status": False, "msg": "获取二维码图片失败"}
+
+            base64_data = base64.b64encode(img_resp.content).decode("utf-8")
+            data_uri = f"data:image/png;base64,{base64_data}"
+
+            self._sessions[uuid] = {
+                "uuid": uuid,
+                "enc": enc,
+                "session": session,
+                "created_at": time.time(),
+            }
+            return {
+                "status": True,
+                "session_id": uuid,
+                "qr_url": data_uri,
+            }
         except Exception as e:
             return {"status": False, "msg": str(e)}
 
@@ -48,16 +68,17 @@ class ChaoXingQRManager:
             return {"status": "EXPIRED"}
 
         session = sess_data["session"]
-        url = "https://passport2.chaoxing.com/getauthstatus"
+        url = "https://passport2.chaoxing.com/getauthstatus/v2"
         payload = {
-            "uuid": sess_data["uuid"],
             "enc": sess_data["enc"],
+            "uuid": sess_data["uuid"],
+            "doubleFactorLogin": 0,
+            "forbidotherlogin": 0,
         }
         try:
-            resp = session.post(url, data=payload, headers=gc.HEADERS, timeout=5)
+            resp = session.post(url, data=payload, timeout=8)
             data = resp.json()
-            status_type = data.get("type")
-            if status_type == 4:
+            if data.get("status") is True:
                 cookies_dict = {}
                 for k, v in session.cookies.items():
                     cookies_dict[k] = v
@@ -71,13 +92,16 @@ class ChaoXingQRManager:
                     "cookies": cookie_str,
                     "uid": str(uid),
                 }
-            elif status_type == 2:
+
+            status_type = str(data.get("type", ""))
+            if status_type == "4":
                 return {"status": "CONFIRMED"}
-            elif status_type in (1, 0, None):
-                return {"status": "PENDING"}
-            elif status_type == 6:
+            elif status_type == "2":
                 self._sessions.pop(session_id, None)
                 return {"status": "EXPIRED"}
+            elif status_type == "6":
+                self._sessions.pop(session_id, None)
+                return {"status": "CANCELLED"}
             else:
                 return {"status": "PENDING"}
         except Exception as e:

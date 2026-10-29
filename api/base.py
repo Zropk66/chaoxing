@@ -492,9 +492,57 @@ class Chaoxing:
 
     def get_course_list(self):
         _session = SessionManager.get_session()
+        logger.trace("正在读取所有的课程列表...")
+
+        # 官方接口直接包含服务端权威的 coursestate 结课状态
+        try:
+            _api_url = "https://mooc1-api.chaoxing.com/mycourse/backclazzdata"
+            _api_resp = _session.get(_api_url, timeout=8)
+            if _api_resp.status_code == 200:
+                api_data = _api_resp.json()
+                if api_data.get("result") == 1:
+                    api_courses = []
+                    for ch in api_data.get("channelList", []):
+                        content = ch.get("content", {})
+                        c_list = content.get("course", {}).get("data", [])
+                        c_data = c_list[0] if c_list else {}
+                        course_id = str(c_data.get("id") or "")
+                        clazz_id = str(content.get("id") or "")
+                        cpi = str(content.get("cpi") or ch.get("cpi") or "")
+                        title = c_data.get("name") or content.get("name") or ""
+                        if not course_id or not clazz_id:
+                            continue
+                        is_ended = (content.get("isFiled") == 1 or c_data.get("coursestate") == 1)
+                        api_courses.append({
+                            "id": f"c_{course_id}",
+                            "info": f"{clazz_id}_{cpi}",
+                            "roleid": f"stu_{clazz_id}",
+                            "clazzId": clazz_id,
+                            "courseId": course_id,
+                            "cpi": cpi,
+                            "title": title,
+                            "desc": c_data.get("schools") or "",
+                            "teacher": c_data.get("teacherfactor") or "",
+                            "status": "已结课" if is_ended else "进行中",
+                            "is_ended": is_ended,
+                        })
+                    if api_courses:
+                        try:
+                            from api.decode import decode_archived_courses
+                            _archive_url = "https://mooc2-ans.chaoxing.com/mooc2-ans/visit/archivecourse/student"
+                            _archive_resp = _session.get(_archive_url, timeout=8)
+                            _archive_resp.encoding = "utf-8"
+                            if _archive_resp.status_code == 200:
+                                api_courses += decode_archived_courses(_archive_resp.text)
+                        except Exception:
+                            pass
+                        logger.info("课程列表读取完毕...")
+                        return api_courses
+        except Exception as e:
+            logger.debug(f"尝试读取官方课程API异常，降级为HTML解析: {e}")
+
         _url = "https://mooc2-ans.chaoxing.com/mooc2-ans/visit/courselistdata"
         _data = {"courseType": 1, "courseFolderId": 0, "query": "", "superstarClass": 0}
-        logger.trace("正在读取所有的课程列表...")
 
         # 接口突然抽风, 增加headers
         # 有可能只是referer的问题
@@ -502,12 +550,14 @@ class Chaoxing:
             "Referer": "https://mooc2-ans.chaoxing.com/mooc2-ans/visit/interaction?moocDomain=https://mooc1-1.chaoxing.com/mooc-ans",
         }
         _resp = _session.post(_url, headers=_headers, data=_data)
+        _resp.encoding = "utf-8"
         # logger.trace(f"原始课程列表内容:\n{_resp.text}")
         logger.info("课程列表读取完毕...")
         course_list = decode_course_list(_resp.text)
 
         _interaction_url = "https://mooc2-ans.chaoxing.com/mooc2-ans/visit/interaction"
         _interaction_resp = _session.get(_interaction_url)
+        _interaction_resp.encoding = "utf-8"
         course_folder = decode_course_folder(_interaction_resp.text)
         for folder in course_folder:
             _data = {
@@ -517,7 +567,19 @@ class Chaoxing:
                 "superstarClass": 0,
             }
             _resp = _session.post(_url, data=_data)
+            _resp.encoding = "utf-8"
             course_list += decode_course_list(_resp.text)
+
+        try:
+            from api.decode import decode_archived_courses
+            _archive_url = "https://mooc2-ans.chaoxing.com/mooc2-ans/visit/archivecourse/student"
+            _archive_resp = _session.get(_archive_url, timeout=8)
+            _archive_resp.encoding = "utf-8"
+            if _archive_resp.status_code == 200:
+                course_list += decode_archived_courses(_archive_resp.text)
+        except Exception as e:
+            logger.debug(f"读取归档已结课课程异常: {e}")
+
         return course_list
 
     def get_activity_list(self, course: dict) -> list[dict]:
@@ -878,6 +940,19 @@ class Chaoxing:
         last_iter = time.time()
         wait_time = int(random.uniform(30, 90))
 
+        limit_minutes = int(self.kwargs.get("daily_watch_limit_minutes", 0) or 0)
+        username = str(self.kwargs.get("username") or getattr(getattr(self, "account", None), "username", "") or "default")
+        from api.account_manager import AccountManager
+        acct_mgr = AccountManager()
+        watched_today = 0.0
+        if limit_minutes > 0:
+            watched_today = acct_mgr.get_daily_watched_seconds(username)
+            if watched_today >= limit_minutes * 60:
+                logger.warning(
+                    f"当前账号今日视频观看时长已达上限 ({int(watched_today // 60)}/{limit_minutes}分钟)，自动跳过视频: {_job['name']}"
+                )
+                return StudyResult.SUCCESS
+
         logger.info(f"开始任务: {_job['name']}, 总时长: {duration}s, 已进行: {play_time}s")
 
         forbidden_retry = 0
@@ -939,16 +1014,26 @@ class Chaoxing:
                     t_name = threading.current_thread().name
                     current_speed = hub.get_effective_speed(t_name)
                     hub.update_worker_state(t_name, {
-                        "chapter": _job.get("name", ""),
+                        "chapter": f"{_course['title']} - {_job.get('name', '')}",
                         "position": int(play_time),
                         "duration": int(duration),
                         "speed": current_speed,
                         "status": "PLAYING",
+                        "type": "video",
                     })
 
                 dt = (time.time() - last_iter) * current_speed
                 last_iter = time.time()
                 play_time = min(duration, play_time + dt)
+
+                if limit_minutes > 0:
+                    acct_mgr.add_daily_watched_seconds(username, dt)
+                    watched_today += dt
+                    if watched_today >= limit_minutes * 60:
+                        logger.warning(
+                            f"当前账号今日视频观看时长达到设定上限 ({limit_minutes}分钟)，停止继续播放: {_job['name']}"
+                        )
+                        return StudyResult.SUCCESS
 
                 # 检查手动模式锁是否被锁定
                 manual_locked = False
@@ -969,6 +1054,10 @@ class Chaoxing:
                 time.sleep(gc.THRESHOLD)
         finally:
             pbar = self._close_pbar_safe(pbar)
+            from api.task_runner import TaskStateHub
+            hub = TaskStateHub()
+            if hub.is_web_mode():
+                hub.remove_worker(threading.current_thread().name)
 
         logger.info("任务完成: {}", _job['name'])
         return StudyResult.SUCCESS
@@ -1537,6 +1626,111 @@ class Chaoxing:
             logger.trace(f"Monitor heartbeat sent -> {resp.status_code}")
         except Exception as e:
             logger.trace(f"Monitor heartbeat failed (non-critical): {e}")
+
+    def study_topic(self, _course: dict, _job: dict, _job_info: dict) -> StudyResult:
+        """执行话题回复讨论任务点."""
+        course_id = str(_course.get("courseId", ""))
+        class_id = str(_course.get("clazzId", ""))
+        cpi = str(_course.get("cpi", ""))
+        topic_uuid = str(_job.get("topic_uuid") or _job.get("property", {}).get("uuid", ""))
+        bbsid = str(_job.get("bbsid") or _job.get("property", {}).get("bbsid", ""))
+        title = _job.get("title") or "话题讨论"
+
+        session = SessionManager.get_session()
+        self.rate_limiter.limit_rate()
+
+        reply_list_url = f"https://groupweb.chaoxing.com/course/topic/v3/bbs/{bbsid}/{topic_uuid}/replysList"
+        params = {
+            "courseId": course_id,
+            "classId": class_id,
+            "cpi": cpi,
+            "isLearnSilver": 0,
+            "ut": "s",
+        }
+        url_token = ""
+        try:
+            resp = session.get(reply_list_url, params=params, timeout=8)
+            resp.encoding = "utf-8"
+            if resp.status_code == 200:
+                uid = str(session.cookies.get("UID") or session.cookies.get("_uid") or "")
+                if uid and f'creater_id="{uid}"' in resp.text:
+                    logger.info(f"话题已回复过，直接标记完成 -> {title}")
+                    return StudyResult.SUCCESS
+
+                token_match = re.search(r'urlToken\s*[:=]\s*["\']([^"\']+)["\']', resp.text)
+                if token_match:
+                    url_token = token_match.group(1)
+        except Exception as e:
+            logger.debug(f"检查话题历史回复异常: {e}")
+
+        reply_content = str(self.kwargs.get("topic_reply_content") or "").strip()
+        if not reply_content:
+            if self.tiku and hasattr(self.tiku, "generate_topic_reply"):
+                try:
+                    ans = self.tiku.generate_topic_reply(title, str(_job.get("content") or ""))
+                    if ans and len(str(ans).strip()) >= 5:
+                        reply_content = str(ans).strip()
+                except Exception as e:
+                    logger.debug(f"题库生成话题回复异常: {e}")
+
+            if not reply_content:
+                default_replies = [
+                    "本章节内容观点明确，理论结合实际，对理解核心知识很有启发。",
+                    "认真研读了本议题，分析透彻，逻辑清晰，加深了专业知识的掌握。",
+                    "结合案例阐述到位，层次分明，对后续学习和实践具有指导意义。",
+                    "通过本小节的学习与思考，进一步理清了知识脉络，收获很大。"
+                ]
+                reply_content = random.choice(default_replies)
+
+        logger.info(f"正在发表话题回复 -> [{title}]: {reply_content}")
+
+        submit_url = f"https://groupweb.chaoxing.com/pc/invitation/{topic_uuid}/addReplys" if topic_uuid else "https://groupweb.chaoxing.com/course/topic/addReply"
+        payload = {
+            "courseId": course_id,
+            "classId": class_id,
+            "replyId": "-1",
+            "uuid": topic_uuid,
+            "topic_content": reply_content,
+            "files_url": "",
+            "files_attr": "",
+            "anonymous": "",
+            "urlToken": url_token,
+            "bbsid": bbsid,
+        }
+        headers = {
+            "Referer": reply_list_url,
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+
+        try:
+            post_resp = session.post(submit_url, data=payload, headers=headers, timeout=10)
+            if post_resp.status_code == 405:
+                logger.warning(f"话题已截止或关闭回复(HTTP 405)，标记完成 -> {title}")
+                return StudyResult.SUCCESS
+            if not post_resp.text or not post_resp.text.strip():
+                logger.info(f"话题回复已提交(HTTP {post_resp.status_code}) -> {title}")
+                return StudyResult.SUCCESS if post_resp.status_code == 200 else StudyResult.ERROR
+            try:
+                res_data = post_resp.json()
+            except Exception:
+                if post_resp.status_code == 200 and ("成功" in post_resp.text or "success" in post_resp.text.lower()):
+                    logger.info(f"话题回复成功 -> {title}")
+                    return StudyResult.SUCCESS
+                logger.error(f"话题回复响应解析异常: [{post_resp.status_code}] {post_resp.text[:100]}")
+                return StudyResult.ERROR
+
+            if res_data.get("status") is True or res_data.get("result") == 1:
+                logger.info(f"话题回复成功 -> {title}")
+                return StudyResult.SUCCESS
+            msg = str(res_data.get("msg", "回复提交未通过"))
+            if "最多回复" in msg:
+                logger.info(f"已达到该话题回复上限，视作完成 -> {title}")
+                return StudyResult.SUCCESS
+            logger.error(f"话题回复失败 -> [{msg}] {title}")
+            return StudyResult.ERROR
+        except Exception as e:
+            logger.error(f"话题回复网络请求异常 -> {e}")
+            return StudyResult.ERROR
 
     def study_emptypage(self, _course, point):
         _session = SessionManager.get_session()

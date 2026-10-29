@@ -62,3 +62,34 @@ class TestTaskStateHub(unittest.TestCase):
         self.hub.skip_manual_answer(prompt_id)
         t.join(timeout=2.0)
         self.assertEqual(res_container, [None])
+
+    def test_task_running_state_and_snapshot(self):
+        self.assertFalse(self.hub.is_task_running())
+        self.assertFalse(self.hub.get_snapshot()["is_running"])
+
+        self.hub.set_task_running(True)
+        self.assertTrue(self.hub.is_task_running())
+        self.assertTrue(self.hub.get_snapshot()["is_running"])
+
+        self.hub.set_task_running(False)
+        self.assertFalse(self.hub.is_task_running())
+        self.assertFalse(self.hub.get_snapshot()["is_running"])
+
+    def test_event_burst_does_not_evict_listener(self):
+        q = self.hub.subscribe_events()
+        try:
+            # 模拟超出队列上限的突发日志
+            for i in range(2500):
+                self.hub.append_log("INFO", f"burst log {i}")
+
+            # 监听器未被异常剔除，且能正常读取最新消息
+            self.assertIn(q, self.hub._listeners)
+            self.assertFalse(q.empty())
+            last_msg = None
+            while not q.empty():
+                last_msg = q.get_nowait()
+            self.assertIsNotNone(last_msg)
+            self.assertEqual(last_msg["event"], "LOG_APPEND")
+            self.assertEqual(last_msg["data"]["message"], "burst log 2499")
+        finally:
+            self.hub.unsubscribe_events(q)

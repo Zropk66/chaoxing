@@ -35,3 +35,12 @@ class TestTikuManualWeb(unittest.TestCase):
         }
         ans = self.tiku._single_query(q)
         self.assertIsNone(ans)
+
+    def test_base_tiku_query_all_is_manual_mode_property(self):
+        from api.answer import Tiku
+        class DummyTiku(Tiku):
+            def _query(self, q_info):
+                return "A"
+        dummy = DummyTiku()
+        res = dummy._query_all([{"title": "测试题目1", "type": "single"}])
+        self.assertEqual(res, ["A"])
