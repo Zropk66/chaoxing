@@ -277,6 +277,7 @@ def init_chaoxing(common_config, tiku_config, config_path=None):
         query_delay=query_delay,
         work_max_retries=work_max_retries,
         work_redo_enabled=work_redo_enabled,
+        cookies=common_config.get("cookies"),
     )
 
     return chaoxing

@@ -262,15 +262,9 @@ def create_app(test_config: dict | None = None) -> Flask:
         cookies_str = active.get("cookies", "")
         if cookies_str:
             try:
-                from api.base import Account, Chaoxing, SessionManager
+                from api.base import Account, Chaoxing
                 account = Account(active.get("username", ""), active.get("password", ""))
-                cx = Chaoxing(account=account)
-                cookie_dict = {}
-                for item in cookies_str.split(";"):
-                    if "=" in item:
-                        k, v = item.strip().split("=", 1)
-                        cookie_dict[k] = v
-                SessionManager.get_session().cookies.update(cookie_dict)
+                cx = Chaoxing(account=account, cookies=cookies_str)
                 raw_courses = cx.get_course_list()
                 for c in raw_courses:
                     cid = str(c.get("courseId", ""))
@@ -290,12 +284,12 @@ def create_app(test_config: dict | None = None) -> Flask:
 
         if not courses and active.get("username") and active.get("password"):
             try:
-                from api.base import Account, Chaoxing, SessionManager
+                from api.base import Account, Chaoxing
                 account = Account(active["username"], active["password"])
                 cx = Chaoxing(account=account)
                 login_res = cx.login(login_with_cookies=False)
                 if login_res.get("status"):
-                    session = SessionManager.get_session()
+                    session = cx.get_session()
                     new_cookies = "; ".join(f"{k}={v}" for k, v in session.cookies.items())
                     account_mgr.save_account(active["username"], {
                         "username": active["username"],

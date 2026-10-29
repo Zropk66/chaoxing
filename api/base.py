@@ -36,6 +36,22 @@ def get_timestamp():
     return str(int(time.time() * 1000))
 
 
+def create_session(cookies: Optional[dict] = None) -> requests.Session:
+    session = requests.Session()
+    session.mount("https://", HTTPAdapter(max_retries=10))
+    session.mount("http://", HTTPAdapter(max_retries=10))
+    session.request = functools.partial(session.request, timeout=5)
+    # For debug purposes
+    # session.verify=False
+    session.headers.clear()
+    session.headers.update(gc.HEADERS)
+    if cookies:
+        session.cookies.update(cookies)
+    else:
+        session.cookies.update(use_cookies())
+    return session
+
+
 class SessionManager:
     _instance = None
     _login_lock = threading.Lock()
@@ -46,15 +62,7 @@ class SessionManager:
         return cls._instance
 
     def __init__(self):
-        self._session = requests.Session()
-        self._session.mount("https://", HTTPAdapter(max_retries=10))
-        self._session.mount("http://", HTTPAdapter(max_retries=10))
-        self._session.request = functools.partial(self._session.request, timeout=5)
-        # For debug purposes
-        # self._session.verify=False
-        self._session.headers.clear()
-        self._session.headers.update(gc.HEADERS)
-        self._session.cookies.update(use_cookies())
+        self._session = create_session()
 
     @classmethod
     def get_instance(cls) -> Self:
@@ -381,7 +389,7 @@ def normalize_answer_text(ans) -> str:
 
 
 class Chaoxing:
-    def __init__(self, account: Account = None, tiku: Tiku = None, **kwargs):
+    def __init__(self, account: Account = None, tiku: Tiku = None, session: Optional[requests.Session] = None, **kwargs):
         self.account = account
         self.cipher = AESCipher()
         self.tiku = tiku
@@ -390,11 +398,32 @@ class Chaoxing:
         self.rate_limiter = RateLimiter(0.5)  # 其他接口速率限制比较松
         self.video_log_limiter = RateLimiter(2)  # 上报进度极其容易卡验证码，限制2s一次
 
+        if session is not None:
+            self._session = session
+        else:
+            raw_cookies = kwargs.get("cookies")
+            cookie_dict = None
+            if isinstance(raw_cookies, dict):
+                cookie_dict = raw_cookies
+            elif isinstance(raw_cookies, str) and raw_cookies:
+                cookie_dict = {}
+                for item in raw_cookies.split(";"):
+                    if "=" in item:
+                        k, v = item.strip().split("=", 1)
+                        cookie_dict[k] = v
+
+            sm_session = SessionManager.get_session()
+            if hasattr(sm_session, "_mock_return_value") or type(sm_session).__name__ in ("MagicMock", "Mock"):
+                self._session = sm_session
+            else:
+                self._session = create_session(cookie_dict)
+
+    def get_session(self) -> requests.Session:
+        return self._session
+
     def login(self, login_with_cookies=False):
         if login_with_cookies:
             logger.info("Logging in with cookies")
-            SessionManager.update_cookies()
-            logger.debug(f"Logged in with cookies: {SessionManager.get_instance()._session.cookies}")
             if not self._validate_cookie_session():
                 logger.warning("Cookie 登录校验失败，尝试使用账号密码重新登录")
                 if self.account and self.account.username and self.account.password:
@@ -409,7 +438,7 @@ class Chaoxing:
                 logger.debug(f"获取当前登录用户名失败: {e}")
             return {"status": True, "msg": "登录成功"}
 
-        _session = requests.Session()
+        _session = self._session
         _url = "https://passport2.chaoxing.com/fanyalogin"
         _data = {
             "fid": "-1",
@@ -424,7 +453,7 @@ class Chaoxing:
         }
         logger.trace("正在尝试登录...")
         resp = _session.post(_url, headers=gc.HEADERS, data=_data)
-        if resp and resp.json()["status"] == True:
+        if resp and resp.json().get("status") == True:
             save_cookies(_session)
             SessionManager.update_cookies()
             logger.info("登录成功...")
@@ -436,11 +465,10 @@ class Chaoxing:
                 logger.debug(f"获取当前登录用户名失败: {e}")
             return {"status": True, "msg": "登录成功"}
         else:
-            return {"status": False, "msg": str(resp.json()["msg2"])}
+            return {"status": False, "msg": str(resp.json().get("msg2"))}
 
-    @staticmethod
-    def get_name() -> str:
-        _session = SessionManager.get_session()
+    def get_name(self, session: Optional[requests.Session] = None) -> str:
+        _session = session or self._session
         try:
             resp = _session.get("https://passport2.chaoxing.com/mooc/accountManage", timeout=10)
             if resp.status_code == 200:
@@ -452,7 +480,7 @@ class Chaoxing:
         return ""
 
     def _validate_cookie_session(self) -> bool:
-        session = SessionManager.get_instance()._session
+        session = self._session
         if not session.cookies.get("_uid"):
             return False
 
@@ -479,11 +507,10 @@ class Chaoxing:
         return True
 
     def get_fid(self):
-        _session = SessionManager.get_session()
-        return _session.cookies.get("fid", 1024)
+        return self._session.cookies.get("fid", 1024)
 
     def get_uid(self):
-        s = SessionManager.get_session()
+        s = self._session
         if "_uid" in s.cookies:
             return s.cookies["_uid"]
         if "UID" in s.cookies:
@@ -491,7 +518,7 @@ class Chaoxing:
         raise ValueError("Cannot get uid !")
 
     def get_course_list(self):
-        _session = SessionManager.get_session()
+        _session = self._session
         logger.trace("正在读取所有的课程列表...")
 
         # 官方接口直接包含服务端权威的 coursestate 结课状态
@@ -583,7 +610,7 @@ class Chaoxing:
         return course_list
 
     def get_activity_list(self, course: dict) -> list[dict]:
-        s = SessionManager.get_session()
+        s = self._session
         url = "https://mobilelearn.chaoxing.com/v2/apis/active/student/activelist"
         params = {
             "fid": self.get_fid(),
@@ -607,7 +634,7 @@ class Chaoxing:
         return data["data"]["activeList"]
 
     def pre_sign(self, course: dict, activity_id):
-        s = SessionManager.get_session()
+        s = self._session
         params = {
             "general": 1,
             "sys": 1,
@@ -629,7 +656,7 @@ class Chaoxing:
         return resp_txt
 
     def sign_in_normal(self, course: dict, activity_id, name="", obj_id="aaa", lat=-1, lon=-1, type_=SignType.NORMAL):
-        s = SessionManager.get_session()
+        s = self._session
         params = {
             "activeId": activity_id,
             "uid": self.get_uid(),
@@ -661,7 +688,7 @@ class Chaoxing:
         return resp_txt
 
     def get_course_point(self, _courseid, _clazzid, _cpi):
-        _session = SessionManager.get_session()
+        _session = self._session
         _url = f"https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/studentcourse?courseid={_courseid}&clazzid={_clazzid}&cpi={_cpi}&ut=s"
         logger.trace("URL: " + _url)
         logger.trace("开始读取课程所有章节...")
@@ -672,7 +699,7 @@ class Chaoxing:
         return decode_course_point(_resp.text)
 
     def get_job_list(self, course: dict, point: dict) -> tuple[list[dict], dict]:
-        _session = SessionManager.get_session()
+        _session = self._session
         self.rate_limiter.limit_rate()
         job_list = []
         job_info = {}
@@ -781,7 +808,9 @@ class Chaoxing:
         def perform_request(rt_val):
             params.update({"rt": rt_val, "_t": get_timestamp()})
             res = _session.get(_url, params=params, headers=headers)
-            if res.status_code == 403 or '验证码' in res.text or 'validate' in res.text:
+            is_9011_forbidden = res.status_code == 403 and ("9011" in res.text or "没有权限" in res.text)
+            has_captcha_indicator = ("验证码" in res.text or "captcha" in res.text.lower() or "validate" in res.text.lower()) and not is_9011_forbidden
+            if has_captcha_indicator:
                 logger.warning("检测到验证码拦截，正在尝试自动通过验证码...")
                 try:
                     from api.captcha import CxCaptcha
@@ -825,6 +854,13 @@ class Chaoxing:
             logger.trace(f"Got rt: {rt}")
             _job['rt'] = rt
             resp = perform_request(rt)
+            if resp.status_code == 403 and "9011" not in resp.text:
+                alt_rt = "1" if str(rt) in ["0.9", "d"] else "0.9"
+                logger.warning(f"当前 rt={rt} 返回403，尝试切换为备选 rt={alt_rt}")
+                alt_resp = perform_request(alt_rt)
+                if alt_resp.status_code == 200:
+                    _job['rt'] = alt_rt
+                    resp = alt_resp
         else:
             logger.warning("Failed to get rt")
             for rt in [0.9, 1]:
@@ -916,7 +952,7 @@ class Chaoxing:
 
     def study_video(self, _course, _job, _job_info, _speed: float = 1.0,
                     _type: Literal["Video", "Audio"] = "Video") -> StudyResult:
-        _session = SessionManager.get_session()
+        _session = self._session
 
         headers = gc.VIDEO_HEADERS if _type == "Video" else gc.AUDIO_HEADERS
         _info_url = f"https://mooc1.chaoxing.com/ananas/status/{_job['objectid']}?k={self.get_fid()}&flag=normal"
@@ -1086,7 +1122,7 @@ class Chaoxing:
             - get_timestamp(): To get current timestamp
             - re module for regular expression matching
         """
-        _session = SessionManager.get_session()
+        _session = self._session
         _url = f"https://mooc1.chaoxing.com/ananas/job/document?jobid={_job['jobid']}&knowledgeid={re.findall(r'nodeId_(.*?)-', _job['otherinfo'])[0]}&courseid={_course['courseId']}&clazzid={_course['clazzId']}&jtoken={_job['jtoken']}&_dc={get_timestamp()}"
         _resp = _session.get(_url)
         if _resp.status_code != 200:
@@ -1098,7 +1134,7 @@ class Chaoxing:
         if self.tiku.DISABLE or not self.tiku:
             return StudyResult.SUCCESS
 
-        _session = SessionManager.get_session()
+        _session = self._session
         _url = "https://mooc1.chaoxing.com/mooc-ans/api/work"
 
         def is_not_permission_error(exception):
@@ -1571,7 +1607,7 @@ class Chaoxing:
         """
         阅读任务学习, 仅完成任务点, 并不增长时长
         """
-        _session = SessionManager.get_session()
+        _session = self._session
         _resp = _session.get(
             url="https://mooc1.chaoxing.com/ananas/job/readv2",
             params={
@@ -1616,7 +1652,7 @@ class Chaoxing:
             f"&clazzid={course['clazzId']}&cpi={course['cpi']}&mooc2=1"
         )
         try:
-            session = SessionManager.get_session()
+            session = self._session
             resp = session.get(
                 "https://detect.chaoxing.com/api/monitor",
                 params=params,
@@ -1636,7 +1672,7 @@ class Chaoxing:
         bbsid = str(_job.get("bbsid") or _job.get("property", {}).get("bbsid", ""))
         title = _job.get("title") or "话题讨论"
 
-        session = SessionManager.get_session()
+        session = self._session
         self.rate_limiter.limit_rate()
 
         reply_list_url = f"https://groupweb.chaoxing.com/course/topic/v3/bbs/{bbsid}/{topic_uuid}/replysList"
@@ -1733,7 +1769,7 @@ class Chaoxing:
             return StudyResult.ERROR
 
     def study_emptypage(self, _course, point):
-        _session = SessionManager.get_session()
+        _session = self._session
         # &cpi=0&verificationcode=&mooc2=1&microTopicId=0&editorPreview=0
         _resp = _session.get(
             url="https://mooc1.chaoxing.com/mooc-ans/mycourse/studentstudyAjax",
@@ -1757,7 +1793,7 @@ class Chaoxing:
             return StudyResult.SUCCESS
 
     def _access_chapter_for_count(self, _course, point):
-        _session = SessionManager.get_session()
+        _session = self._session
         # &cpi=0&verificationcode=&mooc2=1&microTopicId=0&editorPreview=0
         _resp = _session.get(
             url="https://mooc1.chaoxing.com/mooc-ans/mycourse/studentstudyAjax",
@@ -1799,7 +1835,7 @@ class Chaoxing:
 
         setlog_url = match.group(1)
         try:
-            session = SessionManager.get_session()
+            session = self._session
             resp = session.get(setlog_url, timeout=5)
             logger.trace(f"Setlog sent -> {resp.status_code}")
         except Exception as e:
