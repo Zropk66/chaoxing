@@ -126,6 +126,8 @@ def create_app(test_config: dict | None = None) -> Flask:
     auth_mgr = ChaoXingQRManager()
     hub = TaskStateHub()
     hub.set_web_mode(True)
+    hub.set_task_running(False)
+    hub.clear_workers()
 
     def get_active_config_manager() -> ConfigManager:
         active = account_mgr.get_active_account()

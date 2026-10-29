@@ -18,10 +18,11 @@ from api.live import Live
 from api.live_process import LiveProcessor
 from api.process import increase_learning_count_for_course
 
+import queue
 try:
-    from queue import PriorityQueue, ShutDown
+    from queue import PriorityQueue, ShutDown, Empty
 except ImportError:
-    from queue import PriorityQueue
+    from queue import PriorityQueue, Empty
 
 
     class ShutDown(Exception):
@@ -406,11 +407,15 @@ class JobProcessor:
     @log_error
     def worker_thread(self):
         while True:
-            try:
-                task = self.task_queue.get()
-            except ShutDown:
-                logger.info("Queue shut down")
+            from api.task_runner import TaskStateHub
+            if TaskStateHub().is_web_mode() and not TaskStateHub().is_task_running():
                 return
+            try:
+                task = self.task_queue.get(timeout=1.0)
+            except (ShutDown, queue.Empty):
+                if TaskStateHub().is_web_mode() and not TaskStateHub().is_task_running():
+                    return
+                continue
 
             task.result = process_chapter(self.chaoxing, task.course, task.point, self.speed)
 
@@ -610,12 +615,19 @@ def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any],
 
             tasks = []
             for course in course_task:
+                if not _is_task_running:
+                    logger.warning("任务在读取课程章节阶段被用户终止")
+                    return
                 logger.info(f"正在读取课程章节: {course['title']}")
                 point_list = chaoxing.get_course_point(
                     course["courseId"], course["clazzId"], course["cpi"]
                 )
                 for i, point in enumerate(point_list["points"]):
                     tasks.append(ChapterTask(point=point, index=i, course=course))
+
+            if not _is_task_running:
+                logger.warning("任务在执行前被用户终止")
+                return
 
             from api.task_runner import TaskStateHub
             hub = TaskStateHub()
@@ -643,13 +655,14 @@ def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any],
 def stop_study_task() -> bool:
     global _is_task_running, _current_study_processor
     with _task_run_lock:
-        if not _is_task_running or not _current_study_processor:
+        if not _is_task_running:
             return False
-        try:
-            _current_study_processor.task_queue.shutdown(immediate=True)
-        except Exception:
-            pass
         _is_task_running = False
+        if _current_study_processor:
+            try:
+                _current_study_processor.task_queue.shutdown(immediate=True)
+            except Exception:
+                pass
         _current_study_processor = None
         from api.task_runner import TaskStateHub
         TaskStateHub().clear_workers()

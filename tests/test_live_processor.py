@@ -26,6 +26,7 @@ class TestLiveProcessor(unittest.TestCase):
     def test_run_live_updates_hub_state(self):
         hub = TaskStateHub()
         hub.set_web_mode(True)
+        hub.set_task_running(True)
 
         mock_live = MagicMock()
         mock_live.name = "形势与政策第二次直播"

@@ -1001,8 +1001,14 @@ class Chaoxing:
             return StudyResult.SUCCESS
 
         pbar = None
+        from api.task_runner import TaskStateHub
+        hub = TaskStateHub()
         try:
             while not passed:
+                if hub.is_web_mode() and not hub.is_task_running():
+                    logger.warning(f"检测到任务终止指令，中断视频播放: {_job['name']}")
+                    return StudyResult.ERROR
+
                 # Sometimes the last request needs to be sent several times to complete the task
                 if play_time - last_log_time >= wait_time or play_time == duration:
 
