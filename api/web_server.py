@@ -103,7 +103,8 @@ def _fetch_single_course_progress(item: dict, force: bool = False, session_cooki
 
 def create_app(test_config: dict | None = None) -> Flask:
     """构建本地 Web 控制台 Flask 应用服务."""
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    import sys
+    base_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     template_dir = os.path.join(base_dir, "web", "templates")
     static_dir = os.path.join(base_dir, "web", "static")
 
@@ -120,7 +121,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         from api.logger import setup_webui_logging
         setup_webui_logging()
 
-    account_mgr = AccountManager(accounts_dir=os.path.join(base_dir, "accounts"))
+    account_mgr = AccountManager(accounts_dir=os.path.abspath("accounts"))
     auth_mgr = ChaoXingQRManager()
     hub = TaskStateHub()
     hub.set_web_mode(True)
@@ -130,7 +131,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         if active and os.path.exists(active.get("path", "")):
             cfg_path = active["path"]
         else:
-            cfg_path = os.path.join(base_dir, "config.ini")
+            cfg_path = os.path.abspath("config.ini")
         tmpl_path = os.path.join(base_dir, "config_template.ini")
         return ConfigManager(config_path=cfg_path, template_path=tmpl_path)
 

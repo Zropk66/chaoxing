@@ -217,10 +217,20 @@ class AccountManager:
             new_val = round(float(data.get(key, 0.0)) + float(seconds), 2)
             data[key] = new_val
             try:
-                temp_file = f"{stats_file}.tmp"
+                temp_file = f"{stats_file}.{os.getpid()}.tmp"
                 with open(temp_file, "w", encoding="utf8") as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
-                os.replace(temp_file, stats_file)
+                try:
+                    os.replace(temp_file, stats_file)
+                except OSError:
+                    # Windows文件系统短暂锁回退直接写
+                    with open(stats_file, "w", encoding="utf8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    if os.path.exists(temp_file):
+                        try:
+                            os.remove(temp_file)
+                        except OSError:
+                            pass
             except Exception:
                 pass
             return new_val
