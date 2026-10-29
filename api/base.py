@@ -563,7 +563,7 @@ class Chaoxing:
                                 api_courses += decode_archived_courses(_archive_resp.text)
                         except Exception:
                             pass
-                        logger.info("课程列表读取完毕...")
+                        logger.debug("课程列表读取完毕...")
                         return api_courses
         except Exception as e:
             logger.debug(f"尝试读取官方课程API异常，降级为HTML解析: {e}")
@@ -579,7 +579,7 @@ class Chaoxing:
         _resp = _session.post(_url, headers=_headers, data=_data)
         _resp.encoding = "utf-8"
         # logger.trace(f"原始课程列表内容:\n{_resp.text}")
-        logger.info("课程列表读取完毕...")
+        logger.debug("课程列表读取完毕...")
         course_list = decode_course_list(_resp.text)
 
         _interaction_url = "https://mooc2-ans.chaoxing.com/mooc2-ans/visit/interaction"

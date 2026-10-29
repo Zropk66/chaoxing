@@ -17,6 +17,7 @@ _PROGRESS_REGEX = re.compile(
     r'class="catalog_ressbar_width"[^>]*style="[^"]*width:\s*(\d+)%|style="[^"]*width:\s*(\d+)%"[^>]*class="catalog_ressbar_width"'
 )
 _course_progress_cache: dict[str, tuple[float, dict]] = {}
+_courses_list_cache: dict[str, tuple[float, list[dict]]] = {}
 _CACHE_TTL = 300.0
 
 
@@ -258,45 +259,23 @@ def create_app(test_config: dict | None = None) -> Flask:
 
         cfg_mgr = get_active_config_manager()
         selected_ids = set(cfg_mgr.get_course_list())
-        courses = []
-        cookies_str = active.get("cookies", "")
-        if cookies_str:
-            try:
-                from api.base import Account, Chaoxing
-                account = Account(active.get("username", ""), active.get("password", ""))
-                cx = Chaoxing(account=account, cookies=cookies_str)
-                raw_courses = cx.get_course_list()
-                for c in raw_courses:
-                    cid = str(c.get("courseId", ""))
-                    courses.append({
-                        "courseId": cid,
-                        "clazzId": str(c.get("clazzId", "")),
-                        "cpi": str(c.get("cpi", "")),
-                        "title": c.get("title", ""),
-                        "teacher": c.get("teacher", ""),
-                        "status": c.get("status", "进行中"),
-                        "is_ended": c.get("is_ended", False),
-                        "progress": 0,
-                        "selected": cid in selected_ids,
-                    })
-            except Exception as e:
-                hub.append_log("ERROR", f"获取课程列表失败: {e}")
+        force = request.args.get("refresh", "false").lower() in ("true", "1")
+        acc_key = str(active.get("uid") or active.get("username") or active.get("id") or "")
+        now = time.time()
 
-        if not courses and active.get("username") and active.get("password"):
-            try:
-                from api.base import Account, Chaoxing
-                account = Account(active["username"], active["password"])
-                cx = Chaoxing(account=account)
-                login_res = cx.login(login_with_cookies=False)
-                if login_res.get("status"):
-                    session = cx.get_session()
-                    new_cookies = "; ".join(f"{k}={v}" for k, v in session.cookies.items())
-                    account_mgr.save_account(active["username"], {
-                        "username": active["username"],
-                        "password": active["password"],
-                        "cookies": new_cookies,
-                        "use_cookies": "true",
-                    })
+        courses = []
+        if not force and acc_key in _courses_list_cache:
+            cached_time, cached_courses = _courses_list_cache[acc_key]
+            if now - cached_time < _CACHE_TTL:
+                courses = [dict(c) for c in cached_courses]
+
+        if not courses:
+            cookies_str = active.get("cookies", "")
+            if cookies_str:
+                try:
+                    from api.base import Account, Chaoxing
+                    account = Account(active.get("username", ""), active.get("password", ""))
+                    cx = Chaoxing(account=account, cookies=cookies_str)
                     raw_courses = cx.get_course_list()
                     for c in raw_courses:
                         cid = str(c.get("courseId", ""))
@@ -311,10 +290,46 @@ def create_app(test_config: dict | None = None) -> Flask:
                             "progress": 0,
                             "selected": cid in selected_ids,
                         })
-            except Exception as e:
-                hub.append_log("ERROR", f"自动密码重登获取课程失败: {e}")
+                except Exception as e:
+                    hub.append_log("ERROR", f"获取课程列表失败: {e}")
+
+            if not courses and active.get("username") and active.get("password"):
+                try:
+                    from api.base import Account, Chaoxing
+                    account = Account(active["username"], active["password"])
+                    cx = Chaoxing(account=account)
+                    login_res = cx.login(login_with_cookies=False)
+                    if login_res.get("status"):
+                        session = cx.get_session()
+                        new_cookies = "; ".join(f"{k}={v}" for k, v in session.cookies.items())
+                        account_mgr.save_account(active["username"], {
+                            "username": active["username"],
+                            "password": active["password"],
+                            "cookies": new_cookies,
+                            "use_cookies": "true",
+                        })
+                        raw_courses = cx.get_course_list()
+                        for c in raw_courses:
+                            cid = str(c.get("courseId", ""))
+                            courses.append({
+                                "courseId": cid,
+                                "clazzId": str(c.get("clazzId", "")),
+                                "cpi": str(c.get("cpi", "")),
+                                "title": c.get("title", ""),
+                                "teacher": c.get("teacher", ""),
+                                "status": c.get("status", "进行中"),
+                                "is_ended": c.get("is_ended", False),
+                                "progress": 0,
+                                "selected": cid in selected_ids,
+                            })
+                except Exception as e:
+                    hub.append_log("ERROR", f"自动密码重登获取课程失败: {e}")
+
+            if courses:
+                _courses_list_cache[acc_key] = (now, [dict(c) for c in courses])
 
         for c in courses:
+            c["selected"] = str(c.get("courseId", "")) in selected_ids
             cache_key = f"{c['courseId']}_{c['clazzId']}"
             if cache_key in _course_progress_cache:
                 cached_data = _course_progress_cache[cache_key][1]
@@ -333,25 +348,34 @@ def create_app(test_config: dict | None = None) -> Flask:
             return jsonify({"progress": {}})
 
         force = request.args.get("refresh", "false").lower() in ("true", "1")
+        acc_key = str(active.get("uid") or active.get("username") or active.get("id") or "")
+        now = time.time()
+
+        raw_courses = []
+        if not force and acc_key in _courses_list_cache:
+            cached_time, cached_courses = _courses_list_cache[acc_key]
+            if now - cached_time < _CACHE_TTL:
+                raw_courses = cached_courses
+
+        if not raw_courses:
+            cookies_str = active.get("cookies", "")
+            from api.base import Chaoxing
+            cx = Chaoxing(cookies=cookies_str)
+            try:
+                raw_courses = cx.get_course_list()
+                _courses_list_cache[acc_key] = (now, raw_courses)
+            except Exception:
+                raw_courses = []
+
+        progress_map = {}
         cookies_str = active.get("cookies", "")
+        session_cookies = {}
         if cookies_str:
-            cookie_dict = {}
             for item in cookies_str.split(";"):
                 if "=" in item:
                     k, v = item.strip().split("=", 1)
-                    cookie_dict[k] = v
-            from api.base import SessionManager
-            SessionManager.get_session().cookies.update(cookie_dict)
+                    session_cookies[k] = v
 
-        from api.base import Chaoxing
-        cx = Chaoxing()
-        try:
-            raw_courses = cx.get_course_list()
-        except Exception:
-            raw_courses = []
-
-        progress_map = {}
-        session_cookies = dict(SessionManager.get_session().cookies)
         with ThreadPoolExecutor(max_workers=min(5, max(1, len(raw_courses)))) as pool:
             futures = [pool.submit(_fetch_single_course_progress, c, force=force, session_cookies=session_cookies) for c in raw_courses]
             for c, f in zip(raw_courses, futures):
@@ -425,23 +449,20 @@ def create_app(test_config: dict | None = None) -> Flask:
         else:
             course_list = cfg_mgr.get_course_list()
 
-        from api.base import Chaoxing, SessionManager
-        cookies_str = active.get("cookies", "")
-        if cookies_str:
-            cookie_dict = {}
-            for item in cookies_str.split(";"):
-                if "=" in item:
-                    k, v = item.strip().split("=", 1)
-                    cookie_dict[k] = v
-            SessionManager.get_session().cookies.update(cookie_dict)
-
-        cx = Chaoxing()
-        try:
-            all_raw = cx.get_course_list()
-        except Exception:
-            all_raw = []
-
         if not course_list:
+            acc_key = str(active.get("uid") or active.get("username") or active.get("id") or "")
+            all_raw = []
+            if acc_key in _courses_list_cache:
+                all_raw = _courses_list_cache[acc_key][1]
+            else:
+                from api.base import Chaoxing
+                cx = Chaoxing(cookies=active.get("cookies", ""))
+                try:
+                    all_raw = cx.get_course_list()
+                    _courses_list_cache[acc_key] = (time.time(), all_raw)
+                except Exception:
+                    all_raw = []
+
             course_list = [str(c["courseId"]) for c in all_raw if not c.get("is_ended")]
             if not course_list:
                 course_list = [str(c["courseId"]) for c in all_raw]
