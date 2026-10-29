@@ -45,3 +45,42 @@ class TestAccountManager(unittest.TestCase):
         self.assertEqual(total2, 150.5)
         self.assertEqual(self.manager.get_daily_watched_seconds("user1"), 150.5)
         self.assertEqual(self.manager.get_daily_watched_seconds("user2"), 0.0)
+
+    def test_merge_qr_and_password_login(self):
+        self.manager.save_account("qr_session_1", {
+            "cookies": "_uid=998877;UID=998877;vc3=test",
+            "use_cookies": "true",
+        })
+        accounts = self.manager.list_accounts()
+        self.assertEqual(len(accounts), 1)
+        self.assertEqual(accounts[0]["id"], "998877")
+
+        self.manager.save_account("13900000000", {
+            "uid": "998877",
+            "username": "13900000000",
+            "password": "mypassword",
+            "cookies": "_uid=998877;UID=998877;vc3=updated",
+            "use_cookies": "true",
+        })
+        accounts2 = self.manager.list_accounts()
+        self.assertEqual(len(accounts2), 1)
+        self.assertEqual(accounts2[0]["id"], "998877")
+        self.assertEqual(accounts2[0]["username"], "13900000000")
+
+        active = self.manager.get_active_account()
+        self.assertEqual(active["password"], "mypassword")
+        self.assertEqual(active["cookies"], "_uid=998877;UID=998877;vc3=updated")
+
+    def test_delete_account(self):
+        self.manager.save_account("user1", {"cookies": "UID=111"})
+        self.manager.save_account("user2", {"cookies": "UID=222"})
+        self.assertEqual(len(self.manager.list_accounts()), 2)
+
+        ok = self.manager.delete_account("111")
+        self.assertTrue(ok)
+        accounts = self.manager.list_accounts()
+        self.assertEqual(len(accounts), 1)
+        self.assertEqual(accounts[0]["id"], "222")
+
+        fail = self.manager.delete_account("non_exist")
+        self.assertFalse(fail)

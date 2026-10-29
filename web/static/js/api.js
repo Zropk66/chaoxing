@@ -13,6 +13,15 @@ const API = {
     return res.json();
   },
 
+  async deleteAccount(accountId) {
+    const res = await fetch('/api/accounts/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: accountId })
+    });
+    return res.json();
+  },
+
   async createQrSession() {
     const res = await fetch('/api/auth/qr/create', { method: 'POST' });
     return res.json();

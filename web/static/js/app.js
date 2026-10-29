@@ -84,40 +84,83 @@ async function loadAccounts() {
     dropdown.innerHTML = '';
     activeAccountId = data.active_account;
 
+    const accounts = data.accounts || [];
+    const activeAcc = accounts.find(a => a.active) || accounts[0];
     const currentNameEl = document.getElementById('currentAccountName');
     if (currentNameEl) {
-      currentNameEl.textContent = activeAccountId || '未登录账号';
+      currentNameEl.textContent = activeAcc ? (activeAcc.username || activeAcc.uid || activeAcc.id) : '未登录账号';
     }
 
-    data.accounts.forEach(acc => {
+    if (accounts.length === 0) {
+      dropdown.innerHTML = '<div style="padding: 0.75rem 1rem; color: var(--text-dim); font-size: 0.8rem;">暂无已保存账号，请添加登录</div>';
+      return;
+    }
+
+    accounts.forEach(acc => {
       const item = document.createElement('div');
       item.className = `dropdown-item ${acc.active ? 'active' : ''}`;
+      item.style.cssText = 'display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;';
+
       const textWrap = document.createElement('div');
+      textWrap.style.cssText = 'flex: 1; min-width: 0; cursor: pointer;';
       const uEl = document.createElement('div');
       uEl.style.fontWeight = '600';
-      uEl.textContent = acc.username;
+      uEl.style.cssText = 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+      uEl.textContent = acc.username || acc.uid || acc.id;
       const fEl = document.createElement('div');
       fEl.style.fontSize = '0.7rem';
       fEl.style.color = 'var(--text-dim)';
-      fEl.textContent = acc.file;
+      fEl.textContent = acc.uid ? `UID: ${acc.uid}` : acc.file;
       textWrap.appendChild(uEl);
       textWrap.appendChild(fEl);
+
+      textWrap.onclick = async () => {
+        if (!acc.active) {
+          await API.switchAccount(acc.id);
+          toggleAccountDropdown(false);
+          pushToast(`已切换至账号: ${acc.username || acc.id}`);
+          await loadAccounts();
+          await loadCourses(false);
+        } else {
+          toggleAccountDropdown(false);
+        }
+      };
       item.appendChild(textWrap);
+
+      const actionWrap = document.createElement('div');
+      actionWrap.style.cssText = 'display: flex; align-items: center; gap: 0.4rem;';
 
       if (acc.active) {
         const badge = document.createElement('span');
         badge.className = 'badge badge-blue';
         badge.textContent = '当前';
-        item.appendChild(badge);
+        actionWrap.appendChild(badge);
       }
 
-      item.onclick = async () => {
-        await API.switchAccount(acc.id);
-        toggleAccountDropdown(false);
-        pushToast(`已切换至账号: ${acc.username}`);
-        await loadAccounts();
-        await loadCourses();
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn-icon-danger';
+      delBtn.title = '删除此账号';
+      delBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
+      delBtn.onclick = async (e) => {
+        e.stopPropagation();
+        const accName = acc.username || acc.uid || acc.id;
+        if (!confirm(`确认删除本地账号配置 [${accName}] 吗？`)) return;
+        try {
+          const res = await API.deleteAccount(acc.id);
+          if (res.status === 'success') {
+            pushToast(`已删除账号 ${accName}`);
+            await loadAccounts();
+            await loadCourses(false);
+          } else {
+            pushToast(res.msg || '删除失败', 'error');
+          }
+        } catch (err) {
+          pushToast('删除账号异常', 'error');
+        }
       };
+      actionWrap.appendChild(delBtn);
+
+      item.appendChild(actionWrap);
       dropdown.appendChild(item);
     });
   } catch (e) {
@@ -414,6 +457,14 @@ function switchSettingsTab(tabName) {
   });
 }
 
+function onTikuProviderChange(provider) {
+  const allPanes = ['AI', 'SiliconFlow', 'TikuYanxi', 'TikuLike', 'TikuAdapter', 'TikuGo', 'TikuManual', 'custom'];
+  allPanes.forEach(p => {
+    const el = document.getElementById(`tiku_pane_${p}`);
+    if (el) el.style.display = (p === provider) ? 'block' : 'none';
+  });
+}
+
 function populateSettingsForm(cfg) {
   const common = cfg.common || {};
   const tiku = cfg.tiku || {};
@@ -428,13 +479,25 @@ function populateSettingsForm(cfg) {
   setVal('cfg_target_count', common.target_count ?? 100);
   setVal('cfg_daily_watch_limit_minutes', common.daily_watch_limit_minutes ?? 0);
 
-  setVal('cfg_provider', tiku.provider ?? 'TikuYanxi');
+  const knownProviders = ['AI', 'SiliconFlow', 'TikuYanxi', 'TikuLike', 'TikuAdapter', 'TikuGo', 'TikuManual'];
+  const rawProvider = tiku.provider || 'TikuYanxi';
+  if (knownProviders.includes(rawProvider)) {
+    setVal('cfg_provider_select', rawProvider);
+    onTikuProviderChange(rawProvider);
+  } else {
+    setVal('cfg_provider_select', 'custom');
+    setVal('cfg_custom_provider_input', rawProvider);
+    onTikuProviderChange('custom');
+  }
+
   setCheck('cfg_submit', !!tiku.submit);
   setVal('cfg_cover_rate', tiku.cover_rate ?? 0.9);
   setVal('cfg_delay', tiku.delay ?? 1.0);
   setCheck('cfg_check_llm', !!tiku.check_llm_connection);
+  setCheck('cfg_check_llm_sf', !!tiku.check_llm_connection);
 
-  setVal('cfg_tokens', tiku.tokens ?? '');
+  setVal('cfg_tokens_yanxi', tiku.tokens ?? '');
+  setVal('cfg_tokens_like', tiku.tokens ?? '');
   setCheck('cfg_like_search', !!tiku.likeapi_search);
   setCheck('cfg_like_vision', !!tiku.likeapi_vision);
   setVal('cfg_like_model', tiku.likeapi_model ?? 'glm-4.5-air');
@@ -459,6 +522,20 @@ function populateSettingsForm(cfg) {
 }
 
 function readSettingsForm() {
+  const provSelect = getVal('cfg_provider_select');
+  const provider = (provSelect === 'custom') ? (getVal('cfg_custom_provider_input') || 'TikuYanxi') : provSelect;
+
+  let activeTokens = '';
+  if (provSelect === 'TikuLike') {
+    activeTokens = getVal('cfg_tokens_like');
+  } else if (provSelect === 'TikuYanxi') {
+    activeTokens = getVal('cfg_tokens_yanxi');
+  } else {
+    activeTokens = getVal('cfg_tokens_yanxi') || getVal('cfg_tokens_like');
+  }
+
+  const checkLlm = (provSelect === 'SiliconFlow') ? getCheck('cfg_check_llm_sf') : getCheck('cfg_check_llm');
+
   return {
     common: {
       jobs: parseInt(getVal('cfg_jobs'), 10) || 4,
@@ -471,12 +548,12 @@ function readSettingsForm() {
       daily_watch_limit_minutes: parseInt(getVal('cfg_daily_watch_limit_minutes'), 10) || 0
     },
     tiku: {
-      provider: getVal('cfg_provider'),
+      provider: provider,
       submit: getCheck('cfg_submit'),
       cover_rate: parseFloat(getVal('cfg_cover_rate')) || 0.9,
       delay: parseFloat(getVal('cfg_delay')) || 1.0,
-      check_llm_connection: getCheck('cfg_check_llm'),
-      tokens: getVal('cfg_tokens'),
+      check_llm_connection: checkLlm,
+      tokens: activeTokens,
       likeapi_search: getCheck('cfg_like_search'),
       likeapi_vision: getCheck('cfg_like_vision'),
       likeapi_model: getVal('cfg_like_model'),

@@ -172,6 +172,31 @@ def create_app(test_config: dict | None = None) -> Flask:
             SessionManager.get_session().cookies.update(cookie_dict)
         return jsonify({"status": "success", "active_account": acc_id})
 
+    @app.route("/api/accounts/delete", methods=["POST"])
+    def delete_account():
+        data = request.get_json(silent=True) or {}
+        account_id = str(data.get("account_id", "")).strip()
+        if not account_id:
+            return jsonify({"status": "error", "msg": "缺少 account_id"}), 400
+        ok = account_mgr.delete_account(account_id)
+        if ok:
+            active = account_mgr.get_active_account()
+            if active and active.get("cookies"):
+                cookie_dict = {}
+                for item in active["cookies"].split(";"):
+                    if "=" in item:
+                        k, v = item.strip().split("=", 1)
+                        cookie_dict[k] = v
+                from api.base import SessionManager
+                SessionManager.get_session().cookies.clear()
+                SessionManager.get_session().cookies.update(cookie_dict)
+            return jsonify({
+                "status": "success",
+                "active_account": active["id"] if active else None,
+                "accounts": account_mgr.list_accounts(),
+            })
+        return jsonify({"status": "error", "msg": "账号不存在或删除失败"}), 404
+
     @app.route("/api/auth/qr/create", methods=["POST"])
     def create_qr():
         res = auth_mgr.create_session()
@@ -205,7 +230,9 @@ def create_app(test_config: dict | None = None) -> Flask:
             return jsonify({"status": "error", "msg": "用户名或密码不能为空"}), 400
         res = auth_mgr.login_with_password(username, password)
         if res.get("status") == "SUCCESS":
-            account_mgr.save_account(username, {
+            uid = res.get("uid") or username
+            account_mgr.save_account(uid, {
+                "uid": uid,
                 "username": username,
                 "password": password,
                 "cookies": res.get("cookies", ""),
@@ -219,7 +246,7 @@ def create_app(test_config: dict | None = None) -> Flask:
                         cookie_dict[k] = v
                 from api.base import SessionManager
                 SessionManager.get_session().cookies.update(cookie_dict)
-            return jsonify({"status": "success", "account_id": username})
+            return jsonify({"status": "success", "account_id": uid})
         return jsonify({"status": "error", "msg": res.get("msg", "登录失败")}), 401
 
     @app.route("/api/courses", methods=["GET"])

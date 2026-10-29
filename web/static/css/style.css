@@ -730,6 +730,32 @@ table.course-table tr:hover {
   border: 1px solid var(--border-subtle);
 }
 
+.tiku-provider-pane {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+  margin-top: 0.75rem;
+  animation: modalFadeIn 0.15s ease-out;
+}
+
+.btn-icon-danger {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0.3rem;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+.btn-icon-danger:hover {
+  color: var(--accent-danger);
+  background: rgba(239, 68, 68, 0.12);
+}
+
 .quiz-option-card {
   display: flex;
   align-items: center;

@@ -70,3 +70,9 @@ class TestWebServer(unittest.TestCase):
 
         resp_inv = self.client.post("/api/log/level", json={"level": "INVALID"})
         self.assertEqual(resp_inv.status_code, 400)
+
+    def test_account_delete_api(self):
+        resp_del = self.client.post("/api/accounts/delete", json={"account_id": "non_exist"})
+        self.assertEqual(resp_del.status_code, 404)
+        resp_missing = self.client.post("/api/accounts/delete", json={})
+        self.assertEqual(resp_missing.status_code, 400)

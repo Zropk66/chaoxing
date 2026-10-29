@@ -7,6 +7,19 @@ import time
 from typing import Optional
 
 
+def extract_uid_from_data(data: dict) -> str:
+    uid = str(data.get("uid") or "").strip()
+    if uid and uid.isdigit():
+        return uid
+    cookies = str(data.get("cookies") or "")
+    for item in cookies.split(";"):
+        if "=" in item:
+            k, v = item.strip().split("=", 1)
+            if k in ("_uid", "UID") and v.strip() and v.strip().isdigit():
+                return v.strip()
+    return ""
+
+
 class AccountManager:
     """管理独立账号配置文件的存储与切换."""
 
@@ -71,9 +84,25 @@ class AccountManager:
                 logger.error(f"配置文件解析失败 {file_path}: {e}")
                 raise
 
+            common_dict = dict(config.items("common")) if config.has_section("common") else {}
+            uid = extract_uid_from_data(common_dict)
+
+            # 统一迁移历史手机号文件至超星唯一UID命名
+            if uid and acc_id != uid:
+                new_path = os.path.join(self.accounts_dir, f"{uid}.ini")
+                if not os.path.exists(new_path):
+                    try:
+                        os.replace(file_path, new_path)
+                        file_path = new_path
+                        file_name = f"{uid}.ini"
+                        acc_id = uid
+                    except OSError:
+                        pass
+
             username = config.get("common", "username", fallback=acc_id)
             results.append({
                 "id": acc_id,
+                "uid": uid or acc_id,
                 "username": username,
                 "file": file_name,
                 "path": file_path,
@@ -104,8 +133,33 @@ class AccountManager:
         self._active_account_id = account_id
         return self.get_active_account()
 
+    def delete_account(self, account_id: str) -> bool:
+        """删除指定账号的配置文件."""
+        safe_name = "".join(c for c in account_id if c.isalnum() or c in ("_", "-"))
+        if not safe_name:
+            return False
+        file_path = os.path.join(self.accounts_dir, f"{safe_name}.ini")
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except OSError:
+                return False
+            if self._active_account_id == safe_name:
+                self._active_account_id = None
+                remaining = self.list_accounts()
+                if remaining:
+                    self._active_account_id = remaining[0]["id"]
+            return True
+        return False
+
     def save_account(self, username: str, data: dict) -> str:
-        safe_name = "".join(c for c in username if c.isalnum() or c in ("_", "-")) or "default"
+        # 提取超星原生UID作为文件名以合并扫码与账号登录配置
+        uid = extract_uid_from_data(data)
+        if not uid and str(username).strip().isdigit() and len(str(username).strip()) < 11:
+            uid = str(username).strip()
+
+        account_id = uid or username
+        safe_name = "".join(c for c in account_id if c.isalnum() or c in ("_", "-")) or "default"
         file_path = os.path.join(self.accounts_dir, f"{safe_name}.ini")
 
         config = configparser.ConfigParser(interpolation=None)
@@ -115,9 +169,16 @@ class AccountManager:
         if not config.has_section("common"):
             config.add_section("common")
 
-        config.set("common", "username", username)
+        if uid:
+            config.set("common", "uid", uid)
+        if "username" in data and str(data["username"]).strip():
+            config.set("common", "username", str(data["username"]).strip())
+        elif not config.has_option("common", "username"):
+            config.set("common", "username", username)
+
         for key, value in data.items():
-            config.set("common", str(key), str(value))
+            if value is not None and key != "username":
+                config.set("common", str(key), str(value))
 
         with open(file_path, "w", encoding="utf8") as f:
             config.write(f)

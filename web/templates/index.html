@@ -226,9 +226,8 @@
       <div class="settings-layout">
         <div class="settings-nav">
           <button class="settings-tab-btn active" data-tab="common" onclick="switchSettingsTab('common')">基础运行配置</button>
-          <button class="settings-tab-btn" data-tab="tiku" onclick="switchSettingsTab('tiku')">题库与自动答题</button>
-          <button class="settings-tab-btn" data-tab="ai" onclick="switchSettingsTab('ai')">扩展与AI题库</button>
-          <button class="settings-tab-btn" data-tab="manual_notif" onclick="switchSettingsTab('manual_notif')">手动答题与推送</button>
+          <button class="settings-tab-btn" data-tab="tiku" onclick="switchSettingsTab('tiku')">题库与答题设置</button>
+          <button class="settings-tab-btn" data-tab="notification" onclick="switchSettingsTab('notification')">消息推送服务</button>
         </div>
         <div class="settings-content-pane custom-scroll">
           <div class="settings-tab-pane" data-pane="common">
@@ -277,109 +276,157 @@
 
           <div class="settings-tab-pane" data-pane="tiku" style="display: none;">
             <div class="form-group">
-              <label class="form-label">题库提供商序列 (provider)</label>
-              <input type="text" class="form-control" id="cfg_provider">
-              <div class="form-desc">支持逗号拼接多题库回退，如 TikuYanxi,TikuLike,TikuManual</div>
-            </div>
-            <div class="form-group">
-              <div class="switch-control">
-                <span>达到覆盖率直接提交 (submit)</span>
-                <input type="checkbox" id="cfg_submit">
-              </div>
-            </div>
-            <div class="form-group">
-              <label class="form-label">最低题库覆盖率 (cover_rate)</label>
-              <input type="number" step="0.05" min="0" max="1" class="form-control" id="cfg_cover_rate">
-            </div>
-            <div class="form-group">
-              <label class="form-label">多题搜索间隔秒数 (delay)</label>
-              <input type="number" step="0.1" class="form-control" id="cfg_delay">
-            </div>
-            <div class="form-group">
-              <div class="switch-control">
-                <span>启动时检查大模型连接 (check_llm_connection)</span>
-                <input type="checkbox" id="cfg_check_llm">
-              </div>
-            </div>
-          </div>
-
-          <div class="settings-tab-pane" data-pane="ai" style="display: none;">
-            <div class="form-group">
-              <label class="form-label">言溪/LIKE题库 Tokens (tokens)</label>
-              <input type="text" class="form-control" id="cfg_tokens">
-            </div>
-            <div class="form-group">
-              <div class="switch-control">
-                <span>LIKE 开启联网搜索 (likeapi_search)</span>
-                <input type="checkbox" id="cfg_like_search">
-              </div>
-            </div>
-            <div class="form-group">
-              <div class="switch-control">
-                <span>LIKE 开启视觉识图 (likeapi_vision)</span>
-                <input type="checkbox" id="cfg_like_vision">
-              </div>
-            </div>
-            <div class="form-group">
-              <label class="form-label">LIKE 模型名 (likeapi_model)</label>
-              <input type="text" class="form-control" id="cfg_like_model">
-            </div>
-            <div class="form-group">
-              <label class="form-label">TikuAdapter 接口地址 (url)</label>
-              <input type="text" class="form-control" id="cfg_tiku_url">
-            </div>
-            <div class="form-group">
-              <label class="form-label">GO 题库解除限流 Authorization (go_authorization)</label>
-              <input type="text" class="form-control" id="cfg_go_auth">
-            </div>
-            <div class="form-group">
-              <label class="form-label">GO 题库最小间隔秒数 (go_min_interval)</label>
-              <input type="number" step="0.1" class="form-control" id="cfg_go_interval">
-            </div>
-            <div class="form-group">
-              <label class="form-label">自定义大模型 Endpoint</label>
-              <input type="text" class="form-control" id="cfg_ai_endpoint">
-            </div>
-            <div class="form-group">
-              <label class="form-label">自定义大模型 API Key</label>
-              <input type="password" class="form-control" id="cfg_ai_key">
-            </div>
-            <div class="form-group">
-              <label class="form-label">自定义大模型 Model</label>
-              <input type="text" class="form-control" id="cfg_ai_model">
-            </div>
-            <div class="form-group">
-              <label class="form-label">硅基流动 API Key</label>
-              <input type="password" class="form-control" id="cfg_sf_key">
-            </div>
-            <div class="form-group">
-              <label class="form-label">硅基流动 Model</label>
-              <input type="text" class="form-control" id="cfg_sf_model">
-            </div>
-          </div>
-
-          <div class="settings-tab-pane" data-pane="manual_notif" style="display: none;">
-            <div class="form-group">
-              <label class="form-label">手动答题默认交互 (manual_mode_default)</label>
-              <select class="form-control" id="cfg_manual_mode">
-                <option value="batch">批量一次性录入 (batch)</option>
-                <option value="single">逐题交互录入 (single)</option>
+              <label class="form-label">题库提供商选择</label>
+              <select class="form-control" id="cfg_provider_select" onchange="onTikuProviderChange(this.value)">
+                <option value="AI">AI 大模型</option>
+                <option value="SiliconFlow">SiliconFlow 硅基流动</option>
+                <option value="TikuYanxi">言溪题库</option>
+                <option value="TikuLike">LIKE 知识库</option>
+                <option value="TikuAdapter">TikuAdapter 聚合服务</option>
+                <option value="TikuGo">GO 题库</option>
+                <option value="TikuManual">手动答题模式</option>
+                <option value="custom">自定义多题库回退序列</option>
               </select>
             </div>
-            <div class="form-group">
-              <label class="form-label">批量输入答案分隔符 (manual_mode_separator)</label>
-              <input type="text" class="form-control" id="cfg_manual_sep">
+
+            <div id="tiku_pane_AI" class="tiku-provider-pane">
+              <div class="form-group">
+                <label class="form-label">大模型接口地址</label>
+                <input type="text" class="form-control" id="cfg_ai_endpoint" placeholder="例如 http://api.openai.com/v1">
+              </div>
+              <div class="form-group">
+                <label class="form-label">大模型 API Key</label>
+                <input type="password" class="form-control" id="cfg_ai_key" placeholder="sk-...">
+              </div>
+              <div class="form-group">
+                <label class="form-label">模型名称</label>
+                <input type="text" class="form-control" id="cfg_ai_model" placeholder="gpt-4o-mini">
+              </div>
+              <div class="form-group">
+                <div class="switch-control">
+                  <span>启动时检查大模型连通性</span>
+                  <input type="checkbox" id="cfg_check_llm">
+                </div>
+              </div>
             </div>
-            <div class="form-group">
-              <label class="form-label">判断题-正确映射 (true_list)</label>
-              <input type="text" class="form-control" id="cfg_true_list">
+
+            <div id="tiku_pane_SiliconFlow" class="tiku-provider-pane" style="display: none;">
+              <div class="form-group">
+                <label class="form-label">硅基流动 API Key</label>
+                <input type="password" class="form-control" id="cfg_sf_key" placeholder="sk-...">
+              </div>
+              <div class="form-group">
+                <label class="form-label">模型名称</label>
+                <input type="text" class="form-control" id="cfg_sf_model" placeholder="deepseek-ai/DeepSeek-R1">
+              </div>
+              <div class="form-group">
+                <div class="switch-control">
+                  <span>启动时检查大模型连通性</span>
+                  <input type="checkbox" id="cfg_check_llm_sf">
+                </div>
+              </div>
             </div>
-            <div class="form-group">
-              <label class="form-label">判断题-错误映射 (false_list)</label>
-              <input type="text" class="form-control" id="cfg_false_list">
+
+            <div id="tiku_pane_TikuYanxi" class="tiku-provider-pane" style="display: none;">
+              <div class="form-group">
+                <label class="form-label">言溪题库 Token</label>
+                <input type="text" class="form-control" id="cfg_tokens_yanxi" placeholder="支持英文逗号隔开多个 Token">
+              </div>
             </div>
+
+            <div id="tiku_pane_TikuLike" class="tiku-provider-pane" style="display: none;">
+              <div class="form-group">
+                <label class="form-label">LIKE 知识库 Token</label>
+                <input type="text" class="form-control" id="cfg_tokens_like" placeholder="填写 LIKE 知识库 Token">
+              </div>
+              <div class="form-group">
+                <div class="switch-control">
+                  <span>启用联网搜索能力</span>
+                  <input type="checkbox" id="cfg_like_search">
+                </div>
+              </div>
+              <div class="form-group">
+                <div class="switch-control">
+                  <span>启用视觉识图答题能力</span>
+                  <input type="checkbox" id="cfg_like_vision">
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">模型名称</label>
+                <input type="text" class="form-control" id="cfg_like_model" placeholder="glm-4.5-air">
+              </div>
+            </div>
+
+            <div id="tiku_pane_TikuAdapter" class="tiku-provider-pane" style="display: none;">
+              <div class="form-group">
+                <label class="form-label">TikuAdapter 接口地址</label>
+                <input type="text" class="form-control" id="cfg_tiku_url" placeholder="例如 http://127.0.0.1:5001/query">
+              </div>
+            </div>
+
+            <div id="tiku_pane_TikuGo" class="tiku-provider-pane" style="display: none;">
+              <div class="form-group">
+                <label class="form-label">GO 题库解除限流 Token</label>
+                <input type="text" class="form-control" id="cfg_go_auth" placeholder="一之哥哥公众号获取的 Token">
+              </div>
+              <div class="form-group">
+                <label class="form-label">请求最小时间间隔秒数</label>
+                <input type="number" step="0.1" class="form-control" id="cfg_go_interval">
+              </div>
+            </div>
+
+            <div id="tiku_pane_TikuManual" class="tiku-provider-pane" style="display: none;">
+              <div class="form-group">
+                <label class="form-label">手动答题录入方式</label>
+                <select class="form-control" id="cfg_manual_mode">
+                  <option value="batch">批量一次性录入</option>
+                  <option value="single">单题逐题录入</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">批量录入答案分隔符</label>
+                <input type="text" class="form-control" id="cfg_manual_sep" placeholder=";">
+              </div>
+            </div>
+
+            <div id="tiku_pane_custom" class="tiku-provider-pane" style="display: none;">
+              <div class="form-group">
+                <label class="form-label">自定义题库序列</label>
+                <input type="text" class="form-control" id="cfg_custom_provider_input" placeholder="例如 TikuGo,TikuYanxi,TikuLike">
+                <div class="form-desc">按逗号分隔，系统将按顺序依次查询题库与回退</div>
+              </div>
+            </div>
+
+            <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px dashed var(--border-subtle);">
+              <div style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.75rem;">答题通用设置</div>
+              <div class="form-group">
+                <div class="switch-control">
+                  <span>达到覆盖率直接提交</span>
+                  <input type="checkbox" id="cfg_submit">
+                </div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">最低题库覆盖率</label>
+                <input type="number" step="0.05" min="0" max="1" class="form-control" id="cfg_cover_rate">
+              </div>
+              <div class="form-group">
+                <label class="form-label">多题搜索间隔秒数</label>
+                <input type="number" step="0.1" class="form-control" id="cfg_delay">
+              </div>
+              <div class="form-group">
+                <label class="form-label">判断题正确选项映射</label>
+                <input type="text" class="form-control" id="cfg_true_list">
+              </div>
+              <div class="form-group">
+                <label class="form-label">判断题错误选项映射</label>
+                <input type="text" class="form-control" id="cfg_false_list">
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-tab-pane" data-pane="notification" style="display: none;">
             <div class="form-group">
-              <label class="form-label">推送渠道 (notification.provider)</label>
+              <label class="form-label">推送渠道</label>
               <select class="form-control" id="cfg_notif_provider">
                 <option value="ServerChan">Server酱</option>
                 <option value="Qmsg">Qmsg酱</option>
@@ -388,11 +435,11 @@
               </select>
             </div>
             <div class="form-group">
-              <label class="form-label">推送 Webhook 地址 (url)</label>
+              <label class="form-label">推送 Webhook 地址</label>
               <input type="text" class="form-control" id="cfg_notif_url">
             </div>
             <div class="form-group">
-              <label class="form-label">Telegram 目标会话 (tg_chat_id)</label>
+              <label class="form-label">Telegram 目标会话</label>
               <input type="text" class="form-control" id="cfg_notif_tg_id">
             </div>
           </div>
