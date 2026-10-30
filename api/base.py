@@ -443,8 +443,8 @@ class Chaoxing:
                 logger.debug(f"获取当前登录用户名失败: {e}")
             return {"status": True, "msg": "登录成功"}
 
-        _session = self._session
-        _session.cookies.clear()
+        temp_session = requests.Session()
+        temp_session.headers.update(gc.HEADERS)
         _url = "https://passport2.chaoxing.com/fanyalogin"
         _data = {
             "fid": "-1",
@@ -458,8 +458,10 @@ class Chaoxing:
             "independentId": 0,
         }
         logger.trace("正在尝试登录...")
-        resp = _session.post(_url, headers=gc.HEADERS, data=_data)
+        resp = temp_session.post(_url, headers=gc.HEADERS, data=_data)
         if resp and resp.json().get("status") == True:
+            _session.cookies.clear()
+            _session.cookies.update(temp_session.cookies)
             from api.task_runner import TaskStateHub
             if TaskStateHub().is_web_mode():
                 SessionManager.get_session().cookies.clear()
@@ -1415,7 +1417,6 @@ class Chaoxing:
             from api.task_runner import TaskStateHub
             result_info = self._check_work_result(_session, _course, _job, _job_info, questions)
             if result_info is None:
-                TaskStateHub().increment_passed_tests()
                 return StudyResult.SUCCESS
 
             score = float(result_info.get("score", 0.0) or 0.0)
@@ -1436,7 +1437,6 @@ class Chaoxing:
             if unknown > 0:
                 # 解析失配且未达满分: 判定不可信, 不触发重做, 保留已提交成绩
                 logger.warning(f"{unknown} 题答案字段解析失败且成绩 {score} 分未达满分, 跳过重做判定")
-                TaskStateHub().increment_passed_tests()
                 return StudyResult.SUCCESS
 
             feedback_history = result_info.get("feedback", [])
@@ -1444,7 +1444,6 @@ class Chaoxing:
             if attempt >= max_retries:
                 logger.warning(f"章节检测有 {wrong_count}/{total_questions} 题回答错误（成绩 {score} 分），"
                                f"已保留本次成绩, 请人工检查处理")
-                TaskStateHub().increment_passed_tests()
                 return StudyResult.SUCCESS
             logger.warning(
                 f"章节检测有 {wrong_count}/{total_questions} 题回答错误（成绩 {score} 分），"

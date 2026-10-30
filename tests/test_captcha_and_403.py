@@ -16,7 +16,8 @@ class TestCaptchaAnd403(unittest.TestCase):
     @patch("api.captcha.CxCaptcha")
     def test_perform_request_skips_captcha_on_9011_forbidden(self, mock_captcha_cls):
         from api.base import Chaoxing
-        cx = Chaoxing()
+        cx = Chaoxing(cookies={"_uid": "1", "fid": "1"})
+        cx.video_log_limiter = MagicMock()
         mock_session = MagicMock()
         mock_resp = MagicMock()
         mock_resp.status_code = 403
@@ -45,7 +46,8 @@ class TestCaptchaAnd403(unittest.TestCase):
 
     def test_rt_switch_on_403(self):
         from api.base import Chaoxing
-        cx = Chaoxing()
+        cx = Chaoxing(cookies={"_uid": "1", "fid": "1"})
+        cx.video_log_limiter = MagicMock()
         mock_session = MagicMock()
         mock_session.headers = {}
 
@@ -82,8 +84,8 @@ class TestCaptchaAnd403(unittest.TestCase):
 
     def test_chaoxing_session_isolation(self):
         from api.base import Chaoxing
-        cx1 = Chaoxing()
-        cx2 = Chaoxing()
+        cx1 = Chaoxing(cookies={})
+        cx2 = Chaoxing(cookies={})
         cx1.get_session().cookies.set("user", "alice")
         cx2.get_session().cookies.set("user", "bob")
         self.assertEqual(cx1.get_session().cookies.get("user"), "alice")

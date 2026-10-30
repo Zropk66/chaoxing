@@ -309,6 +309,9 @@ def process_job(chaoxing: Chaoxing, course: dict, job: dict, job_info: dict, spe
             course, job, job_info, _speed=speed, _type="Video"
         )
         if video_result.is_failure():
+            from api.task_runner import TaskStateHub
+            if TaskStateHub().is_web_mode() and not TaskStateHub().is_task_running():
+                return video_result
             logger.warning("当前任务非视频任务, 正在尝试音频任务解码")
             video_result = chaoxing.study_video(
                 course, job, job_info, _speed=speed, _type="Audio")
@@ -436,7 +439,9 @@ class JobProcessor:
                 return
             try:
                 task = self.task_queue.get(timeout=1.0)
-            except (ShutDown, queue.Empty):
+            except ShutDown:
+                return
+            except queue.Empty:
                 if TaskStateHub().is_web_mode() and not TaskStateHub().is_task_running():
                     return
                 continue
@@ -669,16 +674,19 @@ def format_time(num, suffix='', divisor=''):
 
 _current_study_thread = None
 _current_study_processor = None
+_current_cancel_event = None
 _is_task_running = False
 _task_run_lock = threading.Lock()
 
 
-def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any], notification_config: dict[str, Any], config_path: str = None) -> bool:
-    global _current_study_thread, _is_task_running
+def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any], notification_config: dict[str, Any], config_path: str | None = None) -> bool:
+    global _current_study_thread, _is_task_running, _current_cancel_event
     with _task_run_lock:
         if _is_task_running:
             return False
         _is_task_running = True
+        _current_cancel_event = threading.Event()
+        cancel_evt = _current_cancel_event
     from api.task_runner import TaskStateHub
     TaskStateHub().set_task_running(True)
 
@@ -688,6 +696,8 @@ def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any],
         try:
             from api.task_runner import TaskStateHub
             hub = TaskStateHub()
+            if cancel_evt.is_set():
+                return
             common_config["speed"] = min(2.0, max(1.0, float(common_config.get("speed", hub.get_global_speed() or 1.0))))
             common_config["notopen_action"] = common_config.get("notopen_action", "retry")
             add_learning_count = str_to_bool(common_config.get("add_learning_count", False))
@@ -703,13 +713,17 @@ def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any],
             if not _login_state.get("status"):
                 raise LoginError(str(_login_state.get("msg", "登录校验失败")))
 
+            if cancel_evt.is_set():
+                logger.warning("任务在登录校验后被用户终止")
+                return
+
             all_course = chaoxing.get_course_list()
             course_task = filter_courses(all_course, common_config.get("course_list"))
             logger.info(f"课程列表过滤完毕，当前任务课程数量: {len(course_task)}")
 
             tasks = []
             for course in course_task:
-                if not _is_task_running:
+                if cancel_evt.is_set():
                     logger.warning("任务在读取课程章节阶段被用户终止")
                     return
                 if is_course_finished(course):
@@ -725,7 +739,7 @@ def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any],
                 for i, point in enumerate(point_list["points"]):
                     tasks.append(ChapterTask(point=point, index=i, course=course))
 
-            if not _is_task_running:
+            if cancel_evt.is_set():
                 logger.warning("任务在执行前被用户终止")
                 return
 
@@ -733,10 +747,11 @@ def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any],
 
             if tasks:
                 p = JobProcessor(chaoxing, tasks, common_config)
-                _current_study_processor = p
-                p.run()
+                if not cancel_evt.is_set():
+                    _current_study_processor = p
+                    p.run()
 
-            if not _is_task_running:
+            if cancel_evt.is_set():
                 logger.warning("课程学习任务已由用户终止")
                 return
 
@@ -749,14 +764,14 @@ def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any],
             logger.info("所有课程学习任务已完成")
             notification.send("chaoxing : 所有课程学习任务已完成")
 
-            if add_learning_count and _is_task_running:
+            if add_learning_count and not cancel_evt.is_set():
                 logger.info("刷课完成，开始增加章节学习次数...")
                 common_config["target_count"] = target_count
                 for course in course_task:
-                    if not _is_task_running:
+                    if cancel_evt.is_set():
                         break
                     increase_learning_count_for_course(chaoxing, course, common_config)
-                if _is_task_running:
+                if not cancel_evt.is_set():
                     logger.info("所有课程章节学习次数增加完成")
                     notification.send("chaoxing : 所有课程章节学习次数增加完成")
         except Exception as e:
@@ -784,11 +799,13 @@ def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any],
 
 
 def stop_study_task() -> bool:
-    global _is_task_running, _current_study_processor
+    global _is_task_running, _current_study_processor, _current_cancel_event
     with _task_run_lock:
         if not _is_task_running:
             return False
         _is_task_running = False
+        if _current_cancel_event:
+            _current_cancel_event.set()
         if _current_study_processor:
             try:
                 _current_study_processor.shutdown_queues(immediate=True)
@@ -812,7 +829,10 @@ def main():
             from api.web_server import create_app
             host = args.host
             port = args.port
-            app = create_app()
+            app_cfg = {}
+            if args.config:
+                app_cfg["DEFAULT_CONFIG_PATH"] = os.path.abspath(args.config)
+            app = create_app(test_config=app_cfg or None)
             print(f"Web 控制台已在后台运行，请通过浏览器访问: http://{host}:{port}")
             app.run(host=host, port=port, debug=False)
             return

@@ -4,8 +4,8 @@ services:
     container_name: chaoxing-webui
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "127.0.0.1:5000:5000"
     volumes:
       - ./accounts:/app/accounts
       - ./logs:/app/logs
-    command: ["--webui", "--host", "0.0.0.0"]
+    command: ["--webui", "-c", "/config/config.ini", "--host", "0.0.0.0"]

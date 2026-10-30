@@ -126,6 +126,10 @@ def create_app(test_config: dict | None = None) -> Flask:
         active = account_mgr.get_active_account()
         if active and os.path.exists(active.get("path", "")):
             cfg_path = active["path"]
+        elif app.config.get("DEFAULT_CONFIG_PATH") and os.path.exists(app.config["DEFAULT_CONFIG_PATH"]):
+            cfg_path = app.config["DEFAULT_CONFIG_PATH"]
+        elif os.path.exists("/config/config.ini"):
+            cfg_path = "/config/config.ini"
         else:
             cfg_path = os.path.abspath("config.ini")
         tmpl_path = os.path.join(base_dir, "config_template.ini")
@@ -422,11 +426,17 @@ def create_app(test_config: dict | None = None) -> Flask:
     @app.route("/api/config/full", methods=["GET"])
     def get_full_config():
         cfg_mgr = get_active_config_manager()
-        return jsonify(cfg_mgr.get_full_config())
+        cfg = cfg_mgr.get_full_config()
+        for secret in ("password", "cookies"):
+            cfg.get("common", {}).pop(secret, None)
+        return jsonify(cfg)
 
     @app.route("/api/config/full", methods=["POST"])
     def save_full_config():
         data = request.get_json() or {}
+        if isinstance(data.get("common"), dict):
+            data["common"].pop("password", None)
+            data["common"].pop("cookies", None)
         cfg_mgr = get_active_config_manager()
         cfg_mgr.update_full_config(data)
         _sync_hub_speed()
@@ -437,12 +447,13 @@ def create_app(test_config: dict | None = None) -> Flask:
         data = request.get_json() or {}
         speed = data.get("speed", 1.0)
         hub.set_global_speed(float(speed))
-        cfg_mgr = get_active_config_manager()
-        if os.path.exists(cfg_mgr.config_path):
-            try:
-                cfg_mgr.update_full_config({"common": {"speed": hub.get_global_speed()}})
-            except Exception:
-                pass
+        if not app.config.get("TESTING"):
+            cfg_mgr = get_active_config_manager()
+            if os.path.exists(cfg_mgr.config_path):
+                try:
+                    cfg_mgr.update_full_config({"common": {"speed": hub.get_global_speed()}})
+                except Exception:
+                    pass
         return jsonify({"status": "success", "global_speed": hub.get_global_speed()})
 
     @app.route("/api/speed/worker", methods=["POST"])
