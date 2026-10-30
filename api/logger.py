@@ -7,7 +7,10 @@ from tqdm import tqdm
 
 tqdm_stream = sys.stderr
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if getattr(sys, "frozen", False):
+    BASE_DIR = os.getcwd()
+else:
+    BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CLI_LOG_DIR = os.path.join(BASE_DIR, "logs", "cli")
 GUI_LOG_DIR = os.path.join(BASE_DIR, "logs", "gui")
 
@@ -29,7 +32,7 @@ def get_log_level() -> str:
 
 
 def set_log_level(level: str) -> None:
-    """动态更新 WebUI 看板日志级别 (TRACE, DEBUG, INFO, WARNING, ERROR)."""
+    """动态更新 WebUI 看板日志级别."""
     global _current_log_level
     lvl = level.upper()
     if lvl in ("TRACE", "DEBUG", "INFO", "WARNING", "ERROR"):
@@ -89,6 +92,10 @@ def setup_webui_logging() -> None:
     werkzeug_logger.propagate = False
     for handler in list(werkzeug_logger.handlers):
         werkzeug_logger.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            pass
     file_handler = logging.FileHandler(GUI_LOG_FILE, encoding="utf-8")
     file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     werkzeug_logger.addHandler(file_handler)

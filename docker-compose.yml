@@ -7,5 +7,5 @@ services:
       - "5000:5000"
     volumes:
       - ./accounts:/app/accounts
-      - ./config.ini:/config/config.ini
-    command: ["--webui"]
+      - ./logs:/app/logs
+    command: ["--webui", "--host", "0.0.0.0"]

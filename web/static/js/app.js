@@ -306,7 +306,10 @@ async function loadCourses(isManual = false) {
 
       const tdProg = document.createElement('td');
       const badge = document.createElement('span');
-      badge.id = `course_prog_${c.courseId}`;
+      const progKey = c.clazzId ? `${c.courseId}_${c.clazzId}` : String(c.courseId);
+      badge.id = `course_prog_${progKey}`;
+      badge.dataset.progKey = progKey;
+      badge.dataset.courseId = String(c.courseId);
       const pct = c.progress;
       const text = c.progress_text || (pct !== null && pct !== undefined ? `${pct}%` : '读取中...');
       if (pct !== null && pct !== undefined) {
@@ -338,9 +341,9 @@ async function loadCoursesProgress(force = false) {
   try {
     const res = await API.fetchCourseProgress(force);
     const map = res.progress || {};
-    Object.entries(map).forEach(([cid, data]) => {
-      const el = document.getElementById(`course_prog_${cid}`);
-      if (!el) return;
+    document.querySelectorAll('[data-prog-key]').forEach(el => {
+      const data = map[el.dataset.progKey] || map[el.dataset.courseId];
+      if (!data) return;
       const pct = data.percent || 0;
       el.className = `badge ${pct >= 100 ? 'badge-green' : (pct > 0 ? 'badge-blue' : 'badge-gray')}`;
       el.textContent = data.text || `${pct}%`;
@@ -377,8 +380,10 @@ function updateSelectedCount() {
 }
 
 function selectAllCourses(checked) {
-  document.querySelectorAll('.course-cb').forEach(cb => {
-    cb.checked = checked;
+  document.querySelectorAll('#courseTableBody tr').forEach(tr => {
+    if (tr.style.display === 'none') return;
+    const cb = tr.querySelector('.course-cb');
+    if (cb) cb.checked = checked;
   });
   updateSelectedCount();
 }
@@ -478,6 +483,8 @@ function populateSettingsForm(cfg) {
   setCheck('cfg_add_learning_count', !!common.add_learning_count);
   setVal('cfg_target_count', common.target_count ?? 100);
   setVal('cfg_daily_watch_limit_minutes', common.daily_watch_limit_minutes ?? 0);
+  setCheck('cfg_topic_auto_reply', common.topic_auto_reply !== undefined ? !!common.topic_auto_reply : true);
+  setVal('cfg_topic_reply_content', common.topic_reply_content ?? '');
 
   const knownProviders = ['AI', 'SiliconFlow', 'TikuYanxi', 'TikuLike', 'TikuAdapter', 'TikuGo', 'TikuManual'];
   const rawProvider = tiku.provider || 'TikuYanxi';
@@ -538,6 +545,7 @@ function readSettingsForm() {
 
   return {
     common: {
+      ...(currentFullConfig.common || {}),
       jobs: parseInt(getVal('cfg_jobs'), 10) || 4,
       notopen_action: getVal('cfg_notopen_action'),
       retry_interval: parseFloat(getVal('cfg_retry_interval')) || 1.0,
@@ -545,9 +553,12 @@ function readSettingsForm() {
       work_max_retries: parseInt(getVal('cfg_work_max_retries'), 10) || 3,
       add_learning_count: getCheck('cfg_add_learning_count'),
       target_count: parseInt(getVal('cfg_target_count'), 10) || 100,
-      daily_watch_limit_minutes: parseInt(getVal('cfg_daily_watch_limit_minutes'), 10) || 0
+      daily_watch_limit_minutes: parseInt(getVal('cfg_daily_watch_limit_minutes'), 10) || 0,
+      topic_auto_reply: getCheck('cfg_topic_auto_reply'),
+      topic_reply_content: getVal('cfg_topic_reply_content')
     },
     tiku: {
+      ...(currentFullConfig.tiku || {}),
       provider: provider,
       submit: getCheck('cfg_submit'),
       cover_rate: parseFloat(getVal('cfg_cover_rate')) || 0.9,
@@ -571,6 +582,7 @@ function readSettingsForm() {
       false_list: getVal('cfg_false_list')
     },
     notification: {
+      ...(currentFullConfig.notification || {}),
       provider: getVal('cfg_notif_provider'),
       url: getVal('cfg_notif_url'),
       tg_chat_id: getVal('cfg_notif_tg_id')
@@ -607,6 +619,7 @@ function getCheck(id) {
 }
 
 function handleManualQuestion(data) {
+  if (currentPendingPromptId && currentPendingPromptId !== data.prompt_id) return;
   currentPendingPromptId = data.prompt_id;
   currentSelectedAnswers = [];
   const modal = document.getElementById('manualQuizModalOverlay');
@@ -616,10 +629,12 @@ function handleManualQuestion(data) {
   const typeEl = document.getElementById('quizTypeBadge');
   const optionsEl = document.getElementById('quizOptionsContainer');
   const textInputEl = document.getElementById('quizTextInputWrap');
+  const answerInput = document.getElementById('quizAnswerInput');
 
   if (titleEl) titleEl.textContent = data.title || '题目';
   if (typeEl) typeEl.textContent = data.type_display || data.type || '单选题';
   if (optionsEl) optionsEl.innerHTML = '';
+  if (answerInput) answerInput.value = '';
 
   const qType = data.type || 'single';
   const options = data.options || [];
@@ -742,6 +757,25 @@ function initSSE() {
     } catch (err) {}
   });
 
+  evtSource.addEventListener('SPEED_CHANGE', e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.type === 'GLOBAL' && data.speed !== undefined) {
+        const sp = parseFloat(data.speed);
+        const speedSlider = document.getElementById('globalSpeedSlider');
+        const speedValEl = document.getElementById('globalSpeedVal');
+        if (speedSlider && document.activeElement !== speedSlider) speedSlider.value = sp;
+        if (speedValEl) speedValEl.textContent = `${sp.toFixed(1)}x`;
+      } else if (data.type === 'WORKER' && data.worker_id && data.speed !== undefined) {
+        const sp = parseFloat(data.speed);
+        const wSlider = document.getElementById(`worker_slider_${data.worker_id}`);
+        const wVal = document.getElementById(`worker_speed_val_${data.worker_id}`);
+        if (wSlider && document.activeElement !== wSlider) wSlider.value = sp.toFixed(1);
+        if (wVal) wVal.textContent = `${sp.toFixed(1)}x`;
+      }
+    } catch (err) {}
+  });
+
   evtSource.addEventListener('MANUAL_QUESTION_REQUEST', e => {
     try {
       const data = JSON.parse(e.data);
@@ -749,16 +783,33 @@ function initSSE() {
     } catch (err) {}
   });
 
-  evtSource.addEventListener('MANUAL_QUESTION_RESOLVED', () => {
+  evtSource.addEventListener('MANUAL_QUESTION_RESOLVED', e => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.prompt_id && currentPendingPromptId && data.prompt_id !== currentPendingPromptId) return;
+    } catch (err) {}
     closeManualQuizModal();
+    API.fetchPendingQuestions().then(res => {
+      const list = res && res.questions;
+      if (Array.isArray(list) && list.length > 0) {
+        handleManualQuestion(list[0]);
+      }
+    }).catch(() => {});
   });
 
-  evtSource.addEventListener('TASK_FINISHED', () => {
+  evtSource.addEventListener('TASK_FINISHED', e => {
     const btnStart = document.getElementById('btnTaskStart');
     const btnStop = document.getElementById('btnTaskStop');
     if (btnStart) btnStart.style.display = 'inline-flex';
     if (btnStop) btnStop.style.display = 'none';
-    pushToast('所有课程学习任务已完成');
+    let status = 'finished';
+    try {
+      const payload = JSON.parse(e.data);
+      status = payload.status || 'finished';
+    } catch (err) {}
+    if (status !== 'stopped') {
+      pushToast('所有课程学习任务已完成');
+    }
     loadCoursesProgress(true);
   });
 }
@@ -859,8 +910,9 @@ function createOrUpdateWorkerCard(w) {
   const fillEl = document.getElementById(`worker_fill_${w.id}`);
   if (fillEl) fillEl.style.width = `${pct}%`;
 
+  const unit = w.unit || 's';
   const timeEl = document.getElementById(`worker_time_${w.id}`);
-  if (timeEl) timeEl.textContent = `${w.position || 0}s / ${w.duration || 0}s`;
+  if (timeEl) timeEl.textContent = `${w.position || 0}${unit} / ${w.duration || 0}${unit}`;
 
   const pctEl = document.getElementById(`worker_pct_${w.id}`);
   if (pctEl) pctEl.textContent = `${pct}%`;
@@ -905,9 +957,17 @@ function updateDashboardStats(data) {
     if (activeVideos.length === 0) {
       wContainer.innerHTML = '<div style="text-align: center; color: var(--text-dim); padding: 1rem;">暂无正在播放的视频</div>';
     } else {
-      wContainer.innerHTML = '';
+      const activeIds = new Set(activeVideos.map(w => `worker_card_${w.id}`));
+      Array.from(wContainer.querySelectorAll('.worker-card')).forEach(el => {
+        if (!activeIds.has(el.id)) el.remove();
+      });
       activeVideos.forEach(w => createOrUpdateWorkerCard(w));
     }
+  }
+
+  const consoleEl = document.getElementById('logConsole');
+  if (consoleEl && consoleEl.children.length === 0 && Array.isArray(data.logs)) {
+    data.logs.forEach(item => appendLog(item.timestamp, item.level, item.message));
   }
 }
 
@@ -938,10 +998,33 @@ document.addEventListener('DOMContentLoaded', () => {
     loadCourses(false);
   });
 
+  API.fetchPendingQuestions().then(res => {
+    const list = res && res.questions;
+    if (Array.isArray(list) && list.length > 0) {
+      handleManualQuestion(list[0]);
+    }
+  }).catch(() => {});
+
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.account-bar')) {
+      toggleAccountDropdown(false);
+    }
+  });
+
   const searchInput = document.getElementById('courseSearchInput');
   if (searchInput) {
     searchInput.addEventListener('input', () => {
       applyCourseFilters();
+    });
+  }
+
+  const quizInput = document.getElementById('quizAnswerInput');
+  if (quizInput) {
+    quizInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
+        e.preventDefault();
+        submitCurrentQuizAnswer();
+      }
     });
   }
 

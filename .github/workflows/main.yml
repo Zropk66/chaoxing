@@ -69,7 +69,7 @@ jobs:
       - name: Build Windows binary
         if: steps.check_ver.outputs.should_release == 'true'
         run: |
-          pyinstaller -F main.py -n 'chaoxing' --add-data "resource;resource" --add-data "web;web" --hidden-import=chardet
+          pyinstaller -F main.py -n 'chaoxing' --add-data "resource;resource" --add-data "web;web" --add-data "config_template.ini;." --hidden-import=chardet
 
       - name: Create release package
         if: steps.check_ver.outputs.should_release == 'true'

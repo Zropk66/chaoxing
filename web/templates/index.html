@@ -152,6 +152,7 @@
           <div style="display: flex; align-items: center; gap: 0.4rem;">
             <span style="font-size: 0.72rem; color: var(--text-dim);">级别:</span>
             <select id="logLevelSelector" class="form-control" style="padding: 0.15rem 0.45rem; font-size: 0.75rem; height: auto; width: auto; font-family: var(--font-mono);" onchange="changeLogLevel(this.value)">
+              <option value="TRACE">TRACE</option>
               <option value="DEBUG">DEBUG</option>
               <option value="INFO" selected>INFO</option>
               <option value="WARNING">WARN</option>
@@ -271,6 +272,16 @@
               <label class="form-label">每日视频观看上限 (分钟，0为不限制)</label>
               <input type="number" min="0" step="10" class="form-control" id="cfg_daily_watch_limit_minutes">
               <div class="form-desc">当前账号每日累计观看视频达到该分钟数后自动跳过后续视频任务点</div>
+            </div>
+            <div class="form-group">
+              <div class="switch-control">
+                <span>话题讨论自动回复 (topic_auto_reply)</span>
+                <input type="checkbox" id="cfg_topic_auto_reply">
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">话题讨论自定义回复内容 (topic_reply_content)</label>
+              <input type="text" class="form-control" id="cfg_topic_reply_content" placeholder="留空则使用大模型或默认学术语料">
             </div>
           </div>
 
