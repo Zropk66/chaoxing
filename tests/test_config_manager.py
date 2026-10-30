@@ -44,3 +44,9 @@ class TestConfigManager(unittest.TestCase):
         self.assertEqual(updated["common"]["jobs"], 8)
         self.assertEqual(updated["tiku"]["provider"], "TikuManual")
         self.assertEqual(updated["notification"]["tg_chat_id"], "12345678")
+
+    def test_template_placeholders_sanitized(self):
+        full_cfg = self.cfg.get_full_config()
+        self.assertEqual(full_cfg["common"].get("username"), "")
+        self.assertEqual(full_cfg["common"].get("password"), "")
+        self.assertEqual(full_cfg["notification"].get("tg_chat_id"), "")

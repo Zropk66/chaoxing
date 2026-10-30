@@ -35,7 +35,11 @@ class ConfigManager:
             val = cfg.get("common", "course_list", fallback="")
             if not val:
                 return []
-            return [item.strip() for item in val.split(",") if item.strip()]
+            return [
+                item.strip()
+                for item in val.split(",")
+                if item.strip() and item.strip().lower() != "xxx"
+            ]
 
     def set_course_list(self, course_ids: list[str]) -> None:
         with self._lock:
@@ -57,11 +61,17 @@ class ConfigManager:
                 result[sec] = {}
                 if template_cfg and template_cfg.has_section(sec):
                     for k, v in template_cfg.items(sec):
-                        result[sec][k] = self._cast_value(k, v)
+                        if str(v).strip() in ("xxx", "xxx,xxx,xxx", "XXXXXX"):
+                            result[sec][k] = ""
+                        else:
+                            result[sec][k] = self._cast_value(k, v)
 
                 if target_cfg.has_section(sec):
                     for k, v in target_cfg.items(sec):
-                        result[sec][k] = self._cast_value(k, v)
+                        if str(v).strip() in ("xxx", "xxx,xxx,xxx", "XXXXXX"):
+                            result[sec][k] = ""
+                        else:
+                            result[sec][k] = self._cast_value(k, v)
 
             return result
 
