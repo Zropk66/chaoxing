@@ -39,9 +39,10 @@ def decode_course_list(html_text: str) -> List[Dict[str, str]]:
 
         link = course.select_one("a")
         href = link.attrs.get("href", "") if link else ""
-        cpi_match = re.findall(r"cpi=(.*?)&", href)
+        cpi_match = re.findall(r"(?:^|[?&])cpi=([^&]*)", href)
         cpi = cpi_match[0] if cpi_match else ""
-        title = course.select_one("span.course-name").attrs["title"] if course.select_one("span.course-name") else ""
+        title_el = course.select_one("span.course-name")
+        title = title_el.attrs.get("title") or title_el.get_text(strip=True) if title_el else ""
 
         course_detail = {
             "id": course.attrs["id"],
@@ -79,7 +80,7 @@ def decode_archived_courses(html_text: str) -> List[Dict[str, Any]]:
         course_id = course_input.attrs.get("value", "")
         link = course.select_one("a")
         href = link.attrs.get("href", "") if link else ""
-        cpi_match = re.findall(r"cpi=(.*?)&", href)
+        cpi_match = re.findall(r"(?:^|[?&])cpi=([^&]*)", href)
         cpi = cpi_match[0] if cpi_match else ""
 
         teacher_el = course.select_one("p.color3")

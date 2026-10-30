@@ -31,21 +31,24 @@ class ConfigManager:
         self.template_path = template_path
         self._lock = threading.Lock()
         if not os.path.exists(self.config_path) and os.path.exists(self.template_path):
+            temp_file = None
             try:
                 target_dir = os.path.dirname(os.path.abspath(self.config_path)) or "."
                 os.makedirs(target_dir, exist_ok=True)
-                temp_file = f"{self.config_path}.{os.getpid()}.tmp"
+                temp_file = f"{self.config_path}.{os.getpid()}.{threading.get_ident()}.tmp"
                 shutil.copyfile(self.template_path, temp_file)
                 try:
                     os.replace(temp_file, self.config_path)
                 except OSError:
-                    if os.path.exists(temp_file):
-                        try:
-                            os.remove(temp_file)
-                        except OSError:
-                            pass
+                    pass
             except Exception:
                 pass
+            finally:
+                if temp_file and os.path.exists(temp_file):
+                    try:
+                        os.remove(temp_file)
+                    except OSError:
+                        pass
 
     def get_course_list(self) -> list[str]:
         with self._lock:
