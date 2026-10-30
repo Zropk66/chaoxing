@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import functools
+import os
 import random
 import secrets
 import re
@@ -45,7 +46,7 @@ def create_session(cookies: Optional[dict] = None) -> requests.Session:
     # session.verify=False
     session.headers.clear()
     session.headers.update(gc.HEADERS)
-    if cookies:
+    if cookies is not None:
         session.cookies.update(cookies)
     else:
         session.cookies.update(use_cookies())
@@ -62,7 +63,9 @@ class SessionManager:
         return cls._instance
 
     def __init__(self):
-        self._session = create_session()
+        if not hasattr(self, "_session"):
+            from api.task_runner import TaskStateHub
+            self._session = create_session({} if TaskStateHub().is_web_mode() else None)
 
     @classmethod
     def get_instance(cls) -> Self:
@@ -75,7 +78,9 @@ class SessionManager:
 
     @classmethod
     def update_cookies(cls):
-        cls.get_instance()._session.cookies.update(use_cookies())
+        from api.task_runner import TaskStateHub
+        if not TaskStateHub().is_web_mode():
+            cls.get_instance()._session.cookies.update(use_cookies())
 
     @classmethod
     def relogin_if_needed(cls, chaoxing_instance) -> bool:
@@ -405,7 +410,7 @@ class Chaoxing:
             cookie_dict = None
             if isinstance(raw_cookies, dict):
                 cookie_dict = raw_cookies
-            elif isinstance(raw_cookies, str) and raw_cookies:
+            elif isinstance(raw_cookies, str):
                 cookie_dict = {}
                 for item in raw_cookies.split(";"):
                     if "=" in item:
@@ -439,6 +444,7 @@ class Chaoxing:
             return {"status": True, "msg": "登录成功"}
 
         _session = self._session
+        _session.cookies.clear()
         _url = "https://passport2.chaoxing.com/fanyalogin"
         _data = {
             "fid": "-1",
@@ -454,8 +460,28 @@ class Chaoxing:
         logger.trace("正在尝试登录...")
         resp = _session.post(_url, headers=gc.HEADERS, data=_data)
         if resp and resp.json().get("status") == True:
-            save_cookies(_session)
-            SessionManager.update_cookies()
+            from api.task_runner import TaskStateHub
+            if TaskStateHub().is_web_mode():
+                SessionManager.get_session().cookies.clear()
+                SessionManager.get_session().cookies.update(_session.cookies)
+                cfg_path = self.kwargs.get("config_path")
+                if cfg_path and os.path.exists(cfg_path):
+                    try:
+                        from api.account_manager import AccountManager
+                        new_cookies = "; ".join(f"{k}={v}" for k, v in _session.cookies.items())
+                        uid = _session.cookies.get("_uid") or _session.cookies.get("UID") or self.account.username
+                        acc_dir = os.path.dirname(os.path.abspath(cfg_path))
+                        AccountManager(accounts_dir=acc_dir, auto_import_legacy=False).save_account(str(uid), {
+                            "username": self.account.username,
+                            "password": self.account.password,
+                            "cookies": new_cookies,
+                            "use_cookies": "true",
+                        })
+                    except Exception as e:
+                        logger.debug(f"同步保存WebUI重登Cookie失败: {e}")
+            else:
+                save_cookies(_session)
+                SessionManager.update_cookies()
             logger.info("登录成功...")
             try:
                 realname = self.get_name()
@@ -481,7 +507,7 @@ class Chaoxing:
 
     def _validate_cookie_session(self) -> bool:
         session = self._session
-        if not session.cookies.get("_uid"):
+        if not (session.cookies.get("_uid") or session.cookies.get("UID")):
             return False
 
         test_session = requests.Session()
@@ -979,7 +1005,7 @@ class Chaoxing:
         limit_minutes = int(self.kwargs.get("daily_watch_limit_minutes", 0) or 0)
         username = str(self.kwargs.get("username") or getattr(getattr(self, "account", None), "username", "") or "default")
         from api.account_manager import AccountManager
-        acct_mgr = AccountManager()
+        acct_mgr = AccountManager(auto_import_legacy=False)
         watched_today = 0.0
         if limit_minutes > 0:
             watched_today = acct_mgr.get_daily_watched_seconds(username)
@@ -1236,6 +1262,10 @@ class Chaoxing:
             total_questions = len(questions["questions"])
             found_answers = 0
             answers = self.tiku.query_all(questions["questions"], query_delay=query_delay)
+            from api.task_runner import TaskStateHub
+            if TaskStateHub().is_web_mode() and not TaskStateHub().is_task_running():
+                logger.warning("检测到任务终止指令，取消提交章节检测")
+                return StudyResult.ERROR
 
             if not isinstance(answers, list):
                 logger.error("题库 query_all 返回的数据格式异常，期望列表。将采用随机答案答题")
@@ -1382,16 +1412,17 @@ class Chaoxing:
             if questions["pyFlag"] == "1":
                 return StudyResult.SUCCESS
 
-            # 6. 提交后检查成绩：若未全部正确，则收集错误反馈并重新作答提交
+            from api.task_runner import TaskStateHub
             result_info = self._check_work_result(_session, _course, _job, _job_info, questions)
             if result_info is None:
-                # 无法获取成绩详情（如接口异常），按原行为返回成功，避免误判失败
+                TaskStateHub().increment_passed_tests()
                 return StudyResult.SUCCESS
 
             score = float(result_info.get("score", 0.0) or 0.0)
             unknown = int(result_info.get("unknown", 0) or 0)
             if result_info.get("all_correct", False):
                 logger.info(f"章节检测全部正确（成绩 {score} 分），通过！")
+                TaskStateHub().increment_passed_tests()
                 return StudyResult.SUCCESS
             if score >= 99.95:
                 # 逐题比对存在格式差异或解析失配, 但满分成绩说明实际全对, 以分数为准
@@ -1400,19 +1431,20 @@ class Chaoxing:
                                    f"（{unknown} 题答案字段未能解析, 建议人工复核）")
                 else:
                     logger.info(f"逐题比对存在格式差异, 但成绩 {score} 分达到满分, 以分数为准, 通过！")
+                TaskStateHub().increment_passed_tests()
                 return StudyResult.SUCCESS
             if unknown > 0:
                 # 解析失配且未达满分: 判定不可信, 不触发重做, 保留已提交成绩
                 logger.warning(f"{unknown} 题答案字段解析失败且成绩 {score} 分未达满分, 跳过重做判定")
+                TaskStateHub().increment_passed_tests()
                 return StudyResult.SUCCESS
 
-            # 7. 未全对：收集错误反馈，进入下一轮重做
             feedback_history = result_info.get("feedback", [])
             wrong_count = len(feedback_history)
             if attempt >= max_retries:
-                # 已是最后一轮(含单轮模式), 保留已提交成绩, 不再触发无意义的重做
                 logger.warning(f"章节检测有 {wrong_count}/{total_questions} 题回答错误（成绩 {score} 分），"
                                f"已保留本次成绩, 请人工检查处理")
+                TaskStateHub().increment_passed_tests()
                 return StudyResult.SUCCESS
             logger.warning(
                 f"章节检测有 {wrong_count}/{total_questions} 题回答错误（成绩 {score} 分），"
@@ -1671,6 +1703,11 @@ class Chaoxing:
 
     def study_topic(self, _course: dict, _job: dict, _job_info: dict) -> StudyResult:
         """执行话题回复讨论任务点."""
+        auto_reply = self.kwargs.get("topic_auto_reply", True)
+        if str(auto_reply).strip().lower() in ("false", "0", "no", "off"):
+            logger.info(f"已关闭话题自动回复，跳过话题讨论 -> {_job.get('title') or '话题讨论'}")
+            return StudyResult.SUCCESS
+
         course_id = str(_course.get("courseId", ""))
         class_id = str(_course.get("clazzId", ""))
         cpi = str(_course.get("cpi", ""))
@@ -1874,10 +1911,15 @@ class Chaoxing:
         if not points:
             logger.warning("章节列表为空, 跳过章节学习次数增加")
             return StudyResult.SUCCESS
+        from api.task_runner import TaskStateHub
+        hub = TaskStateHub()
         while total < target_count:
             for point in points:
                 if total >= target_count:
                     break
+                if hub.is_web_mode() and not hub.is_task_running():
+                    logger.warning("检测到任务终止指令，中断章节学习次数增加")
+                    return StudyResult.ERROR
                 self.rate_limiter.limit_rate(random_time=True, random_min=0, random_max=0.2)
                 html_text = self._access_chapter_for_count(course, point)
                 if not html_text:
@@ -1891,19 +1933,16 @@ class Chaoxing:
                     continue
 
                 consecutive_failures = 0
-
-                # 第 1 步：从 HTML 中提取 setlog URL 并执行（真正的计次 API）
                 self._extract_and_send_setlog(html_text)
-
-                # 第 2 步：立即发送 monitor 心跳包（模拟 fn()）
                 self._send_monitor_heartbeat(course, point)
 
-                # 第 3 步：停留 30 秒（模拟前端 setInterval 间隔）
-                time.sleep(30)
+                for _ in range(30):
+                    if hub.is_web_mode() and not hub.is_task_running():
+                        logger.warning("检测到任务终止指令，中断章节学习次数增加")
+                        return StudyResult.ERROR
+                    time.sleep(1)
 
-                # 第 4 步：再次发送 monitor 心跳包（模拟 setInterval 触发的第二次心跳）
                 self._send_monitor_heartbeat(course, point)
-
                 total += 1
                 logger.info(f"章节学习次数进度: {total}/{target_count}")
         logger.info(f"章节学习次数增加完成, 共完成: {total} 次")
