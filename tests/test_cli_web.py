@@ -33,8 +33,18 @@ class TestCliWebFlag(unittest.TestCase):
         mock_tiku_inst.check_llm_connection.return_value = True
         mock_get_tiku.return_value = mock_tiku_inst
 
-        common_config = {"username": "13800000000", "password": "pwd", "use_cookies": False}
+        common_config = {
+            "username": "13800000000",
+            "password": "pwd",
+            "use_cookies": False,
+            "daily_watch_limit_minutes": 45,
+            "topic_auto_reply": False,
+            "topic_reply_content": "自定义讨论内容",
+        }
         tiku_config = {"provider": "AI", "check_llm_connection": True}
         cx = init_chaoxing(common_config, tiku_config)
         self.assertIsNotNone(cx)
         mock_tiku_inst.check_llm_connection.assert_called_once()
+        self.assertEqual(cx.kwargs.get("daily_watch_limit_minutes"), 45)
+        self.assertFalse(cx.kwargs.get("topic_auto_reply"))
+        self.assertEqual(cx.kwargs.get("topic_reply_content"), "自定义讨论内容")
