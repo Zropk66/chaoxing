@@ -37,7 +37,9 @@ def decode_course_list(html_text: str) -> List[Dict[str, str]]:
         if tip and not is_ended and "未开放" in tip_text:
             continue
 
-        cpi_match = re.findall(r"cpi=(.*?)&", course.select_one("a").attrs["href"])
+        link = course.select_one("a")
+        href = link.attrs.get("href", "") if link else ""
+        cpi_match = re.findall(r"cpi=(.*?)&", href)
         cpi = cpi_match[0] if cpi_match else ""
         title = course.select_one("span.course-name").attrs["title"] if course.select_one("span.course-name") else ""
 

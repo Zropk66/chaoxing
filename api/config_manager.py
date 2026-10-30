@@ -32,8 +32,18 @@ class ConfigManager:
         self._lock = threading.Lock()
         if not os.path.exists(self.config_path) and os.path.exists(self.template_path):
             try:
-                os.makedirs(os.path.dirname(os.path.abspath(self.config_path)) or ".", exist_ok=True)
-                shutil.copyfile(self.template_path, self.config_path)
+                target_dir = os.path.dirname(os.path.abspath(self.config_path)) or "."
+                os.makedirs(target_dir, exist_ok=True)
+                temp_file = f"{self.config_path}.{os.getpid()}.tmp"
+                shutil.copyfile(self.template_path, temp_file)
+                try:
+                    os.replace(temp_file, self.config_path)
+                except OSError:
+                    if os.path.exists(temp_file):
+                        try:
+                            os.remove(temp_file)
+                        except OSError:
+                            pass
             except Exception:
                 pass
 
