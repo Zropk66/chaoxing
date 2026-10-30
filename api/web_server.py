@@ -11,56 +11,27 @@ from flask import Flask, Response, jsonify, render_template, request
 from api.account_manager import AccountManager
 from api.chaoxing_auth import ChaoXingQRManager
 from api.config_manager import ConfigManager
+from api.decode import parse_course_progress as _parse_course_progress_data
 from api.task_runner import TaskStateHub
 
-_PROGRESS_REGEX = re.compile(
-    r'class="catalog_ressbar_width"[^>]*style="[^"]*width:\s*(\d+)%|style="[^"]*width:\s*(\d+)%"[^>]*class="catalog_ressbar_width"'
-)
 _course_progress_cache: dict[str, tuple[float, dict]] = {}
 _courses_list_cache: dict[str, tuple[float, list[dict]]] = {}
 _CACHE_TTL = 300.0
 
 
-def _parse_course_progress_data(html_text: str) -> tuple[int, int, int]:
-    """解析章节页任务点统计、章节完成状态与进度条."""
-    m = re.search(r'完成任务点[^\d]*<span[^>]*>(\d+)</span>\s*/\s*(\d+)', html_text)
-    if m:
-        fin = int(m.group(1))
-        tot = int(m.group(2))
-        if tot > 0:
-            pct = round(fin / tot * 100)
-            return fin, tot, pct
-
-    soup = BeautifulSoup(html_text, "lxml")
-    lis = soup.select("div.chapter_unit li")
-    if lis:
-        tot = len(lis)
-        fin = sum(
-            1 for li in lis
-            if "已完成" in li.get_text() or li.select_one(".icon_yiwanc, .icon-finish, .icon-chuangguan-ok")
-        )
-        if tot > 0:
-            pct = round(fin / tot * 100)
-            return fin, tot, pct
-
-    bar_m = _PROGRESS_REGEX.search(html_text)
-    if bar_m:
-        pct = int(bar_m.group(1) or bar_m.group(2))
-        if pct > 0:
-            return 0, 0, pct
-
-    # 总任务点为零时按用户要求判定为完成
-    return 0, 0, 100
-
-
-def _fetch_single_course_progress(item: dict, force: bool = False, session_cookies: dict | None = None) -> dict:
+def _fetch_single_course_progress(
+    item: dict,
+    force: bool = False,
+    session_cookies: dict | None = None,
+    acc_key: str = "",
+) -> dict:
     cid = str(item.get("courseId", ""))
     clazz_id = str(item.get("clazzId", ""))
     cpi = str(item.get("cpi", ""))
     if not cid or not clazz_id:
-        return {"finished": 0, "total": 0, "percent": 100, "text": "0/0 (100%)"}
+        return {"finished": 0, "total": 0, "percent": 0, "text": "待读取"}
 
-    cache_key = f"{cid}_{clazz_id}"
+    cache_key = f"{acc_key}_{cid}_{clazz_id}" if acc_key else f"{cid}_{clazz_id}"
     now = time.time()
     if not force and cache_key in _course_progress_cache:
         cached_time, val = _course_progress_cache[cache_key]
@@ -71,7 +42,7 @@ def _fetch_single_course_progress(item: dict, force: bool = False, session_cooki
         from api.base import SessionManager
         import requests
         s = requests.Session()
-        cookie_dict = session_cookies or dict(SessionManager.get_session().cookies)
+        cookie_dict = session_cookies if session_cookies is not None else dict(SessionManager.get_session().cookies)
         s.cookies.update(cookie_dict)
         s.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -81,13 +52,29 @@ def _fetch_single_course_progress(item: dict, force: bool = False, session_cooki
         resp = s.get(url, timeout=12)
         resp.encoding = "utf-8"
 
-        if "passport2.chaoxing.com" in resp.url or "login" in resp.url:
+        if resp.status_code != 200:
+            return {"finished": 0, "total": 0, "percent": 0, "text": "待读取"}
+
+        if (
+            "passport2.chaoxing.com" in resp.url
+            or "login" in resp.url
+            or "passport2.chaoxing.com" in resp.text
+        ):
             return {"finished": 0, "total": 0, "percent": 0, "text": "待刷新"}
+
+        has_indicator = (
+            "完成任务点" in resp.text
+            or "chapter_unit" in resp.text
+            or "catalog_ressbar_width" in resp.text
+            or "studentcourse" in resp.text
+        )
+        if not has_indicator:
+            return {"finished": 0, "total": 0, "percent": 0, "text": "待读取"}
 
         fin, tot, pct = _parse_course_progress_data(resp.text)
         if tot > 0:
             text = f"{fin}/{tot} ({pct}%)"
-        elif pct >= 100 or tot == 0:
+        elif pct >= 100:
             text = "0/0 (100%)"
             pct = 100
         else:
@@ -96,8 +83,12 @@ def _fetch_single_course_progress(item: dict, force: bool = False, session_cooki
         res = {"finished": fin, "total": tot, "percent": pct, "text": text}
         _course_progress_cache[cache_key] = (now, res)
         return res
-    except Exception:
-        pass
+    except Exception as e:
+        try:
+            from api.logger import logger
+            logger.debug(f"读取课程完成度失败 {cid}/{clazz_id}: {e}")
+        except Exception:
+            pass
 
     return {"finished": 0, "total": 0, "percent": 0, "text": "待读取"}
 
@@ -122,7 +113,9 @@ def create_app(test_config: dict | None = None) -> Flask:
         from api.logger import setup_webui_logging
         setup_webui_logging()
 
-    account_mgr = AccountManager(accounts_dir=os.path.abspath("accounts"))
+    accounts_dir = app.config.get("ACCOUNTS_DIR") or os.path.abspath("accounts")
+    auto_import = not bool(app.config.get("TESTING"))
+    account_mgr = AccountManager(accounts_dir=accounts_dir, auto_import_legacy=auto_import)
     auth_mgr = ChaoXingQRManager()
     hub = TaskStateHub()
     hub.set_web_mode(True)
@@ -136,7 +129,20 @@ def create_app(test_config: dict | None = None) -> Flask:
         else:
             cfg_path = os.path.abspath("config.ini")
         tmpl_path = os.path.join(base_dir, "config_template.ini")
+        if not os.path.exists(tmpl_path):
+            tmpl_path = os.path.abspath("config_template.ini")
         return ConfigManager(config_path=cfg_path, template_path=tmpl_path)
+
+    def _sync_hub_speed() -> None:
+        try:
+            cfg = get_active_config_manager().get_full_config()
+            sp = cfg.get("common", {}).get("speed")
+            if sp:
+                hub.set_global_speed(float(sp))
+        except Exception:
+            pass
+
+    _sync_hub_speed()
 
     @app.route("/")
     def index():
@@ -164,6 +170,8 @@ def create_app(test_config: dict | None = None) -> Flask:
         if not active:
             return jsonify({"status": "error", "msg": "账号不存在"}), 404
 
+        from api.base import SessionManager
+        SessionManager.get_session().cookies.clear()
         cookies_str = active.get("cookies", "")
         if cookies_str:
             cookie_dict = {}
@@ -171,9 +179,8 @@ def create_app(test_config: dict | None = None) -> Flask:
                 if "=" in item:
                     k, v = item.strip().split("=", 1)
                     cookie_dict[k] = v
-            from api.base import SessionManager
-            SessionManager.get_session().cookies.clear()
             SessionManager.get_session().cookies.update(cookie_dict)
+        _sync_hub_speed()
         return jsonify({"status": "success", "active_account": acc_id})
 
     @app.route("/api/accounts/delete", methods=["POST"])
@@ -184,6 +191,8 @@ def create_app(test_config: dict | None = None) -> Flask:
             return jsonify({"status": "error", "msg": "缺少 account_id"}), 400
         ok = account_mgr.delete_account(account_id)
         if ok:
+            from api.base import SessionManager
+            SessionManager.get_session().cookies.clear()
             active = account_mgr.get_active_account()
             if active and active.get("cookies"):
                 cookie_dict = {}
@@ -191,9 +200,8 @@ def create_app(test_config: dict | None = None) -> Flask:
                     if "=" in item:
                         k, v = item.strip().split("=", 1)
                         cookie_dict[k] = v
-                from api.base import SessionManager
-                SessionManager.get_session().cookies.clear()
                 SessionManager.get_session().cookies.update(cookie_dict)
+            _sync_hub_speed()
             return jsonify({
                 "status": "success",
                 "active_account": active["id"] if active else None,
@@ -222,7 +230,9 @@ def create_app(test_config: dict | None = None) -> Flask:
                     k, v = item.strip().split("=", 1)
                     cookie_dict[k] = v
             from api.base import SessionManager
+            SessionManager.get_session().cookies.clear()
             SessionManager.get_session().cookies.update(cookie_dict)
+            _sync_hub_speed()
         return jsonify(res)
 
     @app.route("/api/auth/login", methods=["POST"])
@@ -249,7 +259,9 @@ def create_app(test_config: dict | None = None) -> Flask:
                         k, v = item.strip().split("=", 1)
                         cookie_dict[k] = v
                 from api.base import SessionManager
+                SessionManager.get_session().cookies.clear()
                 SessionManager.get_session().cookies.update(cookie_dict)
+            _sync_hub_speed()
             return jsonify({"status": "success", "account_id": uid})
         return jsonify({"status": "error", "msg": res.get("msg", "登录失败")}), 401
 
@@ -299,12 +311,13 @@ def create_app(test_config: dict | None = None) -> Flask:
                 try:
                     from api.base import Account, Chaoxing
                     account = Account(active["username"], active["password"])
-                    cx = Chaoxing(account=account)
+                    cx = Chaoxing(account=account, cookies="")
                     login_res = cx.login(login_with_cookies=False)
                     if login_res.get("status"):
                         session = cx.get_session()
                         new_cookies = "; ".join(f"{k}={v}" for k, v in session.cookies.items())
-                        account_mgr.save_account(active["username"], {
+                        account_mgr.save_account(active.get("uid") or active["username"], {
+                            "uid": active.get("uid", ""),
                             "username": active["username"],
                             "password": active["password"],
                             "cookies": new_cookies,
@@ -332,9 +345,10 @@ def create_app(test_config: dict | None = None) -> Flask:
 
         for c in courses:
             c["selected"] = str(c.get("courseId", "")) in selected_ids
-            cache_key = f"{c['courseId']}_{c['clazzId']}"
-            if cache_key in _course_progress_cache:
-                cached_data = _course_progress_cache[cache_key][1]
+            cache_key = f"{acc_key}_{c['courseId']}_{c['clazzId']}" if acc_key else f"{c['courseId']}_{c['clazzId']}"
+            cached_entry = _course_progress_cache.get(cache_key) if not force else None
+            if cached_entry and now - cached_entry[0] < _CACHE_TTL:
+                cached_data = cached_entry[1]
                 c["progress"] = cached_data["percent"]
                 c["progress_text"] = cached_data["text"]
             else:
@@ -354,7 +368,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         now = time.time()
 
         raw_courses = []
-        if not force and acc_key in _courses_list_cache:
+        if acc_key in _courses_list_cache:
             cached_time, cached_courses = _courses_list_cache[acc_key]
             if now - cached_time < _CACHE_TTL:
                 raw_courses = cached_courses
@@ -365,7 +379,8 @@ def create_app(test_config: dict | None = None) -> Flask:
             cx = Chaoxing(cookies=cookies_str)
             try:
                 raw_courses = cx.get_course_list()
-                _courses_list_cache[acc_key] = (now, raw_courses)
+                if raw_courses:
+                    _courses_list_cache[acc_key] = (now, raw_courses)
             except Exception:
                 raw_courses = []
 
@@ -379,13 +394,20 @@ def create_app(test_config: dict | None = None) -> Flask:
                     session_cookies[k] = v
 
         with ThreadPoolExecutor(max_workers=min(5, max(1, len(raw_courses)))) as pool:
-            futures = [pool.submit(_fetch_single_course_progress, c, force=force, session_cookies=session_cookies) for c in raw_courses]
+            futures = [
+                pool.submit(_fetch_single_course_progress, c, force=force, session_cookies=session_cookies, acc_key=acc_key)
+                for c in raw_courses
+            ]
             for c, f in zip(raw_courses, futures):
                 cid = str(c.get("courseId", ""))
+                clazz_id = str(c.get("clazzId", ""))
                 try:
-                    progress_map[cid] = f.result()
+                    res_val = f.result()
                 except Exception:
-                    progress_map[cid] = {"finished": 0, "total": 0, "percent": 0, "text": "待读取"}
+                    res_val = {"finished": 0, "total": 0, "percent": 0, "text": "待读取"}
+                progress_map[cid] = res_val
+                if clazz_id:
+                    progress_map[f"{cid}_{clazz_id}"] = res_val
 
         return jsonify({"progress": progress_map})
 
@@ -407,6 +429,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         data = request.get_json() or {}
         cfg_mgr = get_active_config_manager()
         cfg_mgr.update_full_config(data)
+        _sync_hub_speed()
         return jsonify({"status": "success"})
 
     @app.route("/api/speed/global", methods=["POST"])
@@ -414,6 +437,12 @@ def create_app(test_config: dict | None = None) -> Flask:
         data = request.get_json() or {}
         speed = data.get("speed", 1.0)
         hub.set_global_speed(float(speed))
+        cfg_mgr = get_active_config_manager()
+        if os.path.exists(cfg_mgr.config_path):
+            try:
+                cfg_mgr.update_full_config({"common": {"speed": hub.get_global_speed()}})
+            except Exception:
+                pass
         return jsonify({"status": "success", "global_speed": hub.get_global_speed()})
 
     @app.route("/api/speed/worker", methods=["POST"])
@@ -445,9 +474,10 @@ def create_app(test_config: dict | None = None) -> Flask:
         full_cfg = cfg_mgr.get_full_config()
 
         checked_ids = data.get("course_list")
-        if checked_ids is not None and isinstance(checked_ids, list) and checked_ids:
+        if isinstance(checked_ids, list):
             course_list = [str(x).strip() for x in checked_ids if str(x).strip()]
-            cfg_mgr.set_course_list(course_list)
+            if course_list:
+                cfg_mgr.set_course_list(course_list)
         else:
             course_list = cfg_mgr.get_course_list()
 
@@ -474,7 +504,8 @@ def create_app(test_config: dict | None = None) -> Flask:
 
         common_config = full_cfg.get("common", {})
         common_config["course_list"] = course_list
-        common_config["username"] = active.get("username", "")
+        common_config["username"] = active.get("username") or active.get("uid") or active.get("id") or ""
+        common_config["speed"] = hub.get_global_speed() or float(common_config.get("speed", 1.0))
 
         has_cookies = bool(active.get("cookies"))
         common_config["use_cookies"] = has_cookies

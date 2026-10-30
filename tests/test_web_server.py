@@ -1,3 +1,5 @@
+import os
+import shutil
 import unittest
 
 from api.web_server import create_app
@@ -5,8 +7,19 @@ from api.web_server import create_app
 
 class TestWebServer(unittest.TestCase):
     def setUp(self):
-        self.app = create_app({"TESTING": True})
+        self.test_acc_dir = os.path.abspath(os.path.join("tests", "test_web_accounts"))
+        if os.path.exists(self.test_acc_dir):
+            shutil.rmtree(self.test_acc_dir)
+        self.app = create_app({"TESTING": True, "ACCOUNTS_DIR": self.test_acc_dir})
         self.client = self.app.test_client()
+
+    def tearDown(self):
+        from api.task_runner import TaskStateHub
+        hub = TaskStateHub()
+        hub.set_task_running(False)
+        hub.set_web_mode(False)
+        if os.path.exists(self.test_acc_dir):
+            shutil.rmtree(self.test_acc_dir)
 
     def test_routes_exist(self):
         resp_acc = self.client.get("/api/accounts")
