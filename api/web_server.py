@@ -452,8 +452,8 @@ def create_app(test_config: dict | None = None) -> Flask:
             if os.path.exists(cfg_mgr.config_path):
                 try:
                     cfg_mgr.update_full_config({"common": {"speed": hub.get_global_speed()}})
-                except Exception:
-                    pass
+                except Exception as e:
+                    hub.append_log("WARNING", f"保存全局倍速到配置文件失败: {e}")
         return jsonify({"status": "success", "global_speed": hub.get_global_speed()})
 
     @app.route("/api/speed/worker", methods=["POST"])

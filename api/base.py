@@ -458,8 +458,9 @@ class Chaoxing:
             "independentId": 0,
         }
         logger.trace("正在尝试登录...")
-        resp = temp_session.post(_url, headers=gc.HEADERS, data=_data)
+        resp = temp_session.post(_url, headers=gc.HEADERS, data=_data, timeout=10)
         if resp and resp.json().get("status") == True:
+            _session = self._session
             _session.cookies.clear()
             _session.cookies.update(temp_session.cookies)
             from api.task_runner import TaskStateHub
