@@ -50,3 +50,11 @@ class TestConfigManager(unittest.TestCase):
         self.assertEqual(full_cfg["common"].get("username"), "")
         self.assertEqual(full_cfg["common"].get("password"), "")
         self.assertEqual(full_cfg["notification"].get("tg_chat_id"), "")
+
+    def test_auto_provision_from_template(self):
+        missing_ini = os.path.join("tests", "test_auto_provision.ini")
+        if os.path.exists(missing_ini):
+            os.remove(missing_ini)
+        cfg = ConfigManager(config_path=missing_ini, template_path="config_template.ini")
+        self.assertTrue(os.path.exists(missing_ini))
+        os.remove(missing_ini)

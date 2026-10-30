@@ -1,8 +1,8 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from api.base import Chaoxing, StudyResult
 from api.task_runner import TaskStateHub
-from main import stop_study_task, _task_run_lock
+from main import stop_study_task
 
 
 class TestTaskCancellation(unittest.TestCase):

@@ -20,9 +20,9 @@ from api.process import increase_learning_count_for_course
 
 import queue
 try:
-    from queue import PriorityQueue, ShutDown, Empty
+    from queue import PriorityQueue, ShutDown
 except ImportError:
-    from queue import PriorityQueue, Empty
+    from queue import PriorityQueue
 
 
     class ShutDown(Exception):

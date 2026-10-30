@@ -202,7 +202,7 @@ def decode_course_point(html_text: str) -> Dict[str, Any]:
 
         course_point["points"].extend(points)
 
-    fin, tot, pct = parse_course_progress(html_text, soup=soup)
+    _, tot, pct = parse_course_progress(html_text, soup=soup)
     has_progress_indicator = bool(
         tot > 0
         or _PROGRESS_BAR_REGEX.search(html_text)

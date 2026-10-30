@@ -8,5 +8,8 @@ services:
     volumes:
       - ./accounts:/app/accounts
       - ./logs:/app/logs
-      - ./config:/config
+      - config_data:/config
     command: ["--webui", "-c", "/config/config.ini", "--host", "0.0.0.0"]
+
+volumes:
+  config_data:

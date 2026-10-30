@@ -1,7 +1,8 @@
 import configparser
 import os
+import shutil
 import threading
-from typing import Any, Optional
+from typing import Any
 
 
 class ConfigManager:
@@ -25,9 +26,16 @@ class ConfigManager:
     }
 
     def __init__(self, config_path: str, template_path: str = "config_template.ini") -> None:
+        """初始化配置管理器并在缺少目标配置时从模板同步."""
         self.config_path = config_path
         self.template_path = template_path
         self._lock = threading.Lock()
+        if not os.path.exists(self.config_path) and os.path.exists(self.template_path):
+            try:
+                os.makedirs(os.path.dirname(os.path.abspath(self.config_path)) or ".", exist_ok=True)
+                shutil.copyfile(self.template_path, self.config_path)
+            except Exception:
+                pass
 
     def get_course_list(self) -> list[str]:
         with self._lock:

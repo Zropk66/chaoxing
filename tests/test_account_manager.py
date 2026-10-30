@@ -32,7 +32,7 @@ class TestAccountManager(unittest.TestCase):
         custom_dir = os.path.join("tests", "test_nested_accounts")
         if os.path.exists(custom_dir):
             shutil.rmtree(custom_dir)
-        mgr = AccountManager(accounts_dir=custom_dir)
+        AccountManager(accounts_dir=custom_dir)
         self.assertTrue(os.path.exists(custom_dir))
         shutil.rmtree(custom_dir)
 
