@@ -191,10 +191,9 @@ class Tiku(ABC):
         if not self.DISABLE:
             submit_val = self._conf.get("submit", False)
             self.SUBMIT = submit_val if isinstance(submit_val, bool) else str(submit_val).strip().lower() in ("1", "true", "yes", "on")
-            self.COVER_RATE = float(self._conf['cover_rate'])
-            self.true_list = self._conf['true_list'].split(',')
-            self.false_list = self._conf['false_list'].split(',')
-            # 调用自定义题库初始化
+            self.COVER_RATE = float(self._conf.get('cover_rate', 0.8) or 0.8)
+            self.true_list = str(self._conf.get('true_list', '正确,对,√,是')).split(',')
+            self.false_list = str(self._conf.get('false_list', '错误,错,×,否,不对,不正确')).split(',')
             self._init_tiku()
 
     def _init_tiku(self):
@@ -239,28 +238,24 @@ class Tiku(ABC):
         if not self._is_manual_mode:
             logger.debug(f"处理后标题：{q_info['title']}")
 
-        # 先过缓存（若存在章节检测错误反馈，说明处于重做模式，跳过缓存让大模型参考反馈重新作答）
+        cache_dao = CacheDAO()
         if not getattr(self, 'work_feedback', None):
-            cache_dao = CacheDAO()
             answer = cache_dao.get_cache(q_info['title'])
             if answer:
                 logger.info(f"从缓存中获取答案：{q_info['title']} -> {answer}")
                 return answer.strip()
-            else:
-                answer = self._query(q_info)
-        else:
-            answer = self._query(q_info)
-            if answer:
-                answer = answer.strip()
-                logger.info(f"从{self.name}获取答案：{q_info['title']} -> {answer}")
-                if check_answer(answer, q_info['type'], self):
-                    cache_dao.add_cache(q_info['title'], answer)
-                    return answer
-                else:
-                    logger.info(f"从{self.name}获取到的答案类型与题目类型不符，已舍弃")
-                    return None
 
-            logger.error(f"从{self.name}获取答案失败：{q_info['title']}")
+        answer = self._query(q_info)
+        if answer:
+            answer = answer.strip()
+            logger.info(f"从{self.name}获取答案：{q_info['title']} -> {answer}")
+            if check_answer(answer, q_info['type'], self):
+                cache_dao.add_cache(q_info['title'], answer)
+                return answer
+            logger.info(f"从{self.name}获取到的答案类型与题目类型不符，已舍弃")
+            return None
+
+        logger.error(f"从{self.name}获取答案失败：{q_info['title']}")
         return None
 
     def query_all(self, q_list: list[dict], query_delay: float = 0.0) -> list[Optional[str]]:
@@ -337,6 +332,8 @@ class Tiku(ABC):
 
     def generate_topic_reply(self, title: str, content: str = "") -> Optional[str]:
         """使用配置的题库大模型为讨论话题生成回复内容."""
+        if not isinstance(self, (AI, SiliconFlow)):
+            return None
         topic_desc = f"请针对课程讨论话题发表一段30-80字观点积极、言简意赅的学术讨论看法：{title}"
         if content:
             topic_desc += f"\n话题补充：{content}"
@@ -564,13 +561,22 @@ class TikuFallback(Tiku):
         return results
 
     def set_work_feedback(self, feedback) -> None:
-        """将章节检测错误反馈转发给支持反馈的子题库（如 AI 大模型）."""
+        """将章节检测错误反馈转发给支持反馈的子题库."""
         for provider in self.providers:
             if hasattr(provider, 'set_work_feedback'):
                 try:
                     provider.set_work_feedback(feedback)
                 except Exception as e:
                     logger.warning(f"向子题库 {provider.name} 设置错误反馈失败: {e}")
+
+    def generate_topic_reply(self, title: str, content: str = "") -> Optional[str]:
+        """优先使用回退链中的大模型子题库生成话题讨论回复."""
+        for provider in self.providers:
+            if not provider.DISABLE and isinstance(provider, (AI, SiliconFlow)):
+                ans = provider.generate_topic_reply(title, content)
+                if ans:
+                    return ans
+        return None
 
     def check_llm_connection(self) -> bool:
         for provider in self.providers:
@@ -624,7 +630,7 @@ class TikuYanxi(Tiku):
         return None
 
     def load_token(self):
-        token_list = self._conf['tokens'].split(',')
+        token_list = self._conf.get('tokens', '').split(',')
         if self._token_index == len(token_list):
             # TOKEN 用完
             logger.error('TOKEN用完, 请自行更换再重启脚本')
@@ -1175,7 +1181,7 @@ class TikuAdapter(Tiku):
 
     def _init_tiku(self):
         # self.load_token()
-        self.api = self._conf['url']
+        self.api = self._conf.get('url', '')
 
 
 class AI(Tiku):
@@ -1334,18 +1340,20 @@ class AI(Tiku):
 
         try:
             response = json.loads(remove_md_json_wrapper(completion.choices[0].message.content))
-            sep = "\n"
-            return sep.join(response['Answer']).strip()
-        except:
+            ans_val = response['Answer']
+            if isinstance(ans_val, list):
+                return "\n".join(str(x) for x in ans_val).strip()
+            return str(ans_val).strip()
+        except Exception:
             logger.error("无法解析大模型输出内容")
             return None
 
     def _init_tiku(self):
-        self.endpoint = self._conf['endpoint']
-        self.key = self._conf['key']
-        self.model = self._conf['model']
-        self.http_proxy = self._conf['http_proxy']
-        self.min_interval_seconds = int(self._conf['min_interval_seconds'])
+        self.endpoint = self._conf.get('endpoint', '')
+        self.key = self._conf.get('key', '')
+        self.model = self._conf.get('model', '')
+        self.http_proxy = self._conf.get('http_proxy', '')
+        self.min_interval_seconds = int(self._conf.get('min_interval_seconds', 3) or 0)
 
     def check_llm_connection(self) -> bool:
         """
@@ -1476,7 +1484,10 @@ class SiliconFlow(Tiku):
                 result = response.json()
                 content = result['choices'][0]['message']['content']
                 parsed = json.loads(remove_md_json_wrapper(content))
-                return "\n".join(parsed['Answer']).strip()
+                ans_val = parsed['Answer']
+                if isinstance(ans_val, list):
+                    return "\n".join(str(x) for x in ans_val).strip()
+                return str(ans_val).strip()
             else:
                 logger.error(f"API请求失败：{response.status_code} {response.text}")
                 return None
@@ -1486,13 +1497,10 @@ class SiliconFlow(Tiku):
             return None
 
     def _init_tiku(self):
-        # 从配置文件读取参数
-        self.api_endpoint = self._conf.get('siliconflow_endpoint', 'https://api.siliconflow.cn/v1/chat/completions')
-        self.api_key = self._conf['siliconflow_key']
-
-        self.model_name = self._conf.get('siliconflow_model', 'deepseek-ai/DeepSeek-V3')
-
-        self.min_interval = int(self._conf.get('min_interval_seconds', 3))
+        self.api_endpoint = self._conf.get('siliconflow_endpoint') or 'https://api.siliconflow.cn/v1/chat/completions'
+        self.api_key = self._conf.get('siliconflow_key', '')
+        self.model_name = self._conf.get('siliconflow_model') or 'deepseek-ai/DeepSeek-V3'
+        self.min_interval = int(self._conf.get('min_interval_seconds', 3) or 0)
 
     def check_llm_connection(self) -> bool:
         """
@@ -1618,7 +1626,14 @@ class TikuManual(Tiku):
         with self._manual_lock:
             from api.task_runner import TaskStateHub
             if TaskStateHub().is_web_mode():
-                return [self._single_query(q) for q in q_list]
+                results = []
+                for q in q_list:
+                    ans = self._single_query(q)
+                    results.append(ans)
+                    if ans is None and not TaskStateHub().is_task_running():
+                        results.extend([None] * (len(q_list) - len(results)))
+                        break
+                return results
             print(f"\n{'=' * 20} 手动输入题库 (共 {len(q_list)} 题) {'=' * 20}")
             if self.default_mode == 'batch':
                 ans_list = self._batch_query_flow(q_list)
