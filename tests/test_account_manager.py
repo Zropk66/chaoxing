@@ -84,3 +84,15 @@ class TestAccountManager(unittest.TestCase):
 
         fail = self.manager.delete_account("non_exist")
         self.assertFalse(fail)
+
+    def test_empty_username_in_ini_falls_back_to_uid(self):
+        self.manager.save_account("887766", {
+            "uid": "887766",
+            "username": "",
+            "cookies": "_uid=887766;UID=887766",
+        })
+        accounts = self.manager.list_accounts()
+        self.assertEqual(len(accounts), 1)
+        self.assertEqual(accounts[0]["username"], "887766")
+        active = self.manager.get_active_account()
+        self.assertEqual(active["username"], "887766")

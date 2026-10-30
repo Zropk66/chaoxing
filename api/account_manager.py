@@ -2,6 +2,7 @@ import configparser
 import glob
 import json
 import os
+import sys
 import threading
 import time
 from typing import Optional
@@ -29,7 +30,10 @@ class AccountManager:
         self.accounts_dir = accounts_dir
         os.makedirs(self.accounts_dir, exist_ok=True)
         self._active_account_id: Optional[str] = None
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if getattr(sys, "frozen", False):
+            base_dir = os.getcwd()
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         default_dir = os.path.join(base_dir, "accounts")
         if auto_import_legacy and os.path.abspath(self.accounts_dir) == os.path.abspath(default_dir):
             self._import_legacy_if_needed()
@@ -40,23 +44,32 @@ class AccountManager:
         if ini_files:
             return
 
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if getattr(sys, "frozen", False):
+            base_dir = os.getcwd()
+        else:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         cfg_file = os.path.join(base_dir, "config.ini")
         cookies_file = os.path.join(base_dir, "cookies.txt")
 
         legacy_data = {}
-        username = "default"
+        username = ""
 
         if os.path.exists(cfg_file):
             cfg = configparser.ConfigParser(interpolation=None)
             try:
                 cfg.read(cfg_file, encoding="utf8")
                 if cfg.has_section("common"):
-                    legacy_data = dict(cfg.items("common"))
-                    username = legacy_data.get("username", "default")
+                    raw_common = dict(cfg.items("common"))
+                    for k, v in raw_common.items():
+                        if str(v).strip() not in ("xxx", "xxx,xxx,xxx", "XXXXXX"):
+                            legacy_data[k] = v
+                    raw_user = str(legacy_data.get("username", "")).strip()
+                    if raw_user and raw_user != "xxx":
+                        username = raw_user
             except Exception:
                 pass
 
+        has_cookies = False
         if os.path.exists(cookies_file):
             try:
                 with open(cookies_file, "r", encoding="utf8") as f:
@@ -64,11 +77,12 @@ class AccountManager:
                 if c_txt:
                     legacy_data["cookies"] = c_txt
                     legacy_data["use_cookies"] = "true"
+                    has_cookies = True
             except Exception:
                 pass
 
-        if legacy_data:
-            self.save_account(username, legacy_data)
+        if username or has_cookies:
+            self.save_account(username or "default", legacy_data)
 
     def list_accounts(self) -> list[dict]:
         ini_files = glob.glob(os.path.join(self.accounts_dir, "*.ini"))
@@ -99,7 +113,8 @@ class AccountManager:
                     except OSError:
                         pass
 
-            username = config.get("common", "username", fallback=acc_id)
+            raw_username = config.get("common", "username", fallback="").strip()
+            username = raw_username if raw_username and raw_username != "xxx" else (uid or acc_id)
             results.append({
                 "id": acc_id,
                 "uid": uid or acc_id,
@@ -126,6 +141,11 @@ class AccountManager:
                 res = dict(acc)
                 if cfg.has_section("common"):
                     res.update(dict(cfg.items("common")))
+                res["id"] = acc["id"]
+                res["uid"] = acc["uid"]
+                res["username"] = acc["username"]
+                res["file"] = acc["file"]
+                res["path"] = acc["path"]
                 return res
         return None
 
@@ -173,7 +193,7 @@ class AccountManager:
             config.set("common", "uid", uid)
         if "username" in data and str(data["username"]).strip():
             config.set("common", "username", str(data["username"]).strip())
-        elif not config.has_option("common", "username"):
+        elif not config.has_option("common", "username") or not config.get("common", "username").strip():
             config.set("common", "username", username)
 
         for key, value in data.items():
@@ -187,7 +207,7 @@ class AccountManager:
         return file_path
 
     def get_daily_watched_seconds(self, username: str) -> float:
-        """获取指定账号今日已观看视频的累计时长(秒)."""
+        """获取指定账号今日已观看视频的累计时长."""
         today_str = time.strftime("%Y-%m-%d")
         safe_name = "".join(c for c in username if c.isalnum() or c in ("_", "-")) or "default"
         stats_file = os.path.join(self.accounts_dir, "daily_watch.json")
@@ -201,7 +221,7 @@ class AccountManager:
         return 0.0
 
     def add_daily_watched_seconds(self, username: str, seconds: float) -> float:
-        """累加指定账号今日观看视频时长(秒)并持久化."""
+        """累加指定账号今日观看视频时长并持久化."""
         today_str = time.strftime("%Y-%m-%d")
         safe_name = "".join(c for c in username if c.isalnum() or c in ("_", "-")) or "default"
         key = f"{safe_name}_{today_str}"
