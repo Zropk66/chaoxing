@@ -127,3 +127,34 @@ class TestTopicTask(unittest.TestCase):
         }
         res = cx.study_topic(course, job, {})
         self.assertEqual(res, StudyResult.SUCCESS)
+
+    @patch("api.base.SessionManager.get_session")
+    def test_study_topic_disabled_skips_request(self, mock_get_session):
+        mock_session = MagicMock()
+        mock_get_session.return_value = mock_session
+
+        cx = Chaoxing(topic_auto_reply=False)
+        course = {"courseId": "c1", "clazzId": "cl1", "cpi": "cp1", "title": "测试课程"}
+        job = {"type": "topic", "jobid": "j1", "title": "测试跳过话题"}
+        res = cx.study_topic(course, job, {})
+        self.assertEqual(res, StudyResult.SUCCESS)
+        mock_session.get.assert_not_called()
+        mock_session.post.assert_not_called()
+
+    def test_non_llm_tiku_does_not_generate_topic_reply(self):
+        from api.answer import TikuYanxi, TikuManual, AI
+        yanxi = TikuYanxi()
+        self.assertIsNone(yanxi.generate_topic_reply("测试话题"))
+        manual = TikuManual()
+        self.assertIsNone(manual.generate_topic_reply("测试话题"))
+
+        ai_tiku = AI()
+        ai_tiku.DISABLE = False
+        ai_tiku._query = MagicMock(return_value="大模型针对本章节讨论议题生成的分析观点")
+        with patch("api.answer.CacheDAO") as mock_cache_cls:
+            mock_cache = MagicMock()
+            mock_cache.get_cache.return_value = None
+            mock_cache_cls.return_value = mock_cache
+            ans = ai_tiku.generate_topic_reply("测试话题")
+            self.assertEqual(ans, "大模型针对本章节讨论议题生成的分析观点")
+
