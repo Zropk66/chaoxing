@@ -76,6 +76,7 @@ class TaskStateHub:
         """从看板中移除已结束的视频播放工作线程."""
         with self._lock:
             self._workers.pop(worker_id, None)
+            self._worker_speeds.pop(worker_id, None)
         self.broadcast_event("WORKER_REMOVED", {"id": worker_id})
         self.broadcast_event("STATUS_UPDATE", self.get_snapshot())
 
@@ -83,28 +84,37 @@ class TaskStateHub:
         """任务结束时清空工作线程状态并广播更新."""
         with self._lock:
             self._workers.clear()
+            self._worker_speeds.clear()
         self.broadcast_event("STATUS_UPDATE", self.get_snapshot())
 
-    def set_task_running(self, running: bool) -> None:
+    def set_task_running(self, running: bool, stopped: bool = False) -> None:
         """更新全局任务运行态并在结束时通知前端."""
         with self._lock:
+            was_running = self._is_task_running
             self._is_task_running = running
             if running:
                 self._overall_stats["start_time"] = time.time()
                 self._overall_stats["completed_jobs"] = 0
                 self._overall_stats["total_jobs"] = 0
                 self._overall_stats["passed_tests"] = 0
+                self._overall_stats["all_finished"] = False
+            else:
+                for entry in self._pending_questions.values():
+                    entry["answer"] = None
+                    entry["resolved"] = True
+                    entry["event"].set()
         self.broadcast_event("STATUS_UPDATE", self.get_snapshot())
-        if not running:
-            self.broadcast_event("TASK_FINISHED", {"status": "finished"})
+        if was_running and not running:
+            self.broadcast_event("TASK_FINISHED", {"status": "stopped" if stopped else "finished"})
 
     def is_task_running(self) -> bool:
         with self._lock:
             return self._is_task_running
 
-    def set_total_jobs(self, total: int) -> None:
+    def set_total_jobs(self, total: int, all_finished: bool = False) -> None:
         with self._lock:
             self._overall_stats["total_jobs"] = total
+            self._overall_stats["all_finished"] = bool(all_finished and total == 0)
         self.broadcast_event("STATUS_UPDATE", self.get_snapshot())
 
     def increment_completed_jobs(self) -> None:
@@ -121,6 +131,7 @@ class TaskStateHub:
     def increment_passed_tests(self) -> None:
         with self._lock:
             self._overall_stats["passed_tests"] += 1
+        self.broadcast_event("STATUS_UPDATE", self.get_snapshot())
 
     def append_log(self, level: str, message: str) -> None:
         now_str = time.strftime("%H:%M:%S")
@@ -138,7 +149,12 @@ class TaskStateHub:
             elapsed = int(time.time() - self._overall_stats["start_time"])
             completed = self._overall_stats["completed_jobs"]
             total = self._overall_stats["total_jobs"]
-            progress = round((completed / total * 100), 1) if total > 0 else 0.0
+            if total > 0:
+                progress = round((completed / total * 100), 1)
+            elif self._overall_stats.get("all_finished"):
+                progress = 100.0
+            else:
+                progress = 0.0
             return {
                 "is_running": self._is_task_running,
                 "overall_progress": progress,

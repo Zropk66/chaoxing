@@ -24,12 +24,13 @@ class LiveProcessor:
             logger.error(f"解析直播时长失败: {str(e)}")
             return False
 
-        adjusted_duration = duration / speed
-        total_minutes = (int(adjusted_duration) + 59) // 60
-        logger.info(f"开始刷取直播'{live.name}'，总时长{total_minutes}分钟")
-
         hub = TaskStateHub()
         worker_id = threading.current_thread().name
+        effective_speed = hub.get_effective_speed(worker_id) if hub.is_web_mode() else speed
+        adjusted_duration = duration / max(0.5, float(effective_speed))
+        total_minutes = max(1, (int(adjusted_duration) + 59) // 60)
+        logger.info(f"开始刷取直播'{live.name}'，总时长{total_minutes}分钟")
+
         chapter_name = f"[直播] {course_title} - {live.name}" if course_title else f"[直播] {live.name}"
 
         try:
@@ -42,8 +43,9 @@ class LiveProcessor:
                 if hub.is_web_mode():
                     hub.update_worker_state(worker_id, {
                         "chapter": chapter_name,
-                        "position": min(duration, (i + 1) * 60),
-                        "duration": int(duration),
+                        "position": i + 1,
+                        "duration": total_minutes,
+                        "unit": "分钟",
                         "speed": current_speed,
                         "status": "PLAYING",
                         "type": "video",
@@ -53,7 +55,13 @@ class LiveProcessor:
                 success = live.do_finish()
                 if not success:
                     logger.warning(f"第{i + 1}分钟时长提交失败，将重试")
-                    time.sleep(5)
+                    retry_waited = 0.0
+                    while retry_waited < 5.0:
+                        if hub.is_web_mode() and not hub.is_task_running():
+                            logger.warning(f"检测到任务终止指令，中断直播刷取: {live.name}")
+                            return False
+                        time.sleep(0.5)
+                        retry_waited += 0.5
                     live.do_finish()
 
                 current_speed = hub.get_effective_speed(worker_id) if hub.is_web_mode() else speed
@@ -63,6 +71,10 @@ class LiveProcessor:
                     if hub.is_web_mode() and not hub.is_task_running():
                         logger.warning(f"检测到任务终止指令，中断直播刷取: {live.name}")
                         return False
+                    current_speed = hub.get_effective_speed(worker_id) if hub.is_web_mode() else speed
+                    sleep_time = max(1.0, 59.0 / max(0.5, float(current_speed)))
+                    if elapsed >= sleep_time:
+                        break
                     step = min(1.0, sleep_time - elapsed)
                     time.sleep(step)
                     elapsed += step
