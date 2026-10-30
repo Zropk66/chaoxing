@@ -127,13 +127,62 @@ def decode_course_folder(html_text: str) -> List[Dict[str, str]]:
     return course_folder_list
 
 
+_PROGRESS_BAR_REGEX = re.compile(
+    r'class="catalog_ressbar_width"[^>]*style="[^"]*width:\s*(\d+)%|style="[^"]*width:\s*(\d+)%"[^>]*class="catalog_ressbar_width"'
+)
+
+
+def parse_course_progress(html_text: str, soup: Optional[BeautifulSoup] = None) -> Tuple[int, int, int]:
+    """解析章节页任务点统计、章节完成状态与进度百分比."""
+    if soup is None:
+        soup = BeautifulSoup(html_text, "lxml")
+
+    has_locked = any("解锁" in tip.get_text() for tip in soup.select("span.bntHoverTips"))
+    max_pct = 99 if has_locked else 100
+
+    m = re.search(r'完成任务点[^\d]*<span[^>]*>(\d+)</span>\s*/\s*(\d+)', html_text)
+    if m:
+        fin = int(m.group(1))
+        tot = int(m.group(2))
+        if tot == 0:
+            return 0, 0, max_pct
+        if fin >= tot:
+            return fin, tot, max_pct
+        return fin, tot, min(99, round(fin / tot * 100))
+
+    bar_m = _PROGRESS_BAR_REGEX.search(html_text)
+    bar_pct = int(bar_m.group(1) or bar_m.group(2)) if bar_m else None
+
+    lis = soup.select("div.chapter_unit li")
+    if lis:
+        has_any_job = any(
+            li.select_one("input.knowledgeJobCount") or li.select_one("span.bntHoverTips")
+            for li in lis
+        )
+        if not has_any_job:
+            return 0, 0, max_pct
+        tot = len(lis)
+        fin = sum(
+            1 for li in lis
+            if "已完成" in li.get_text() or li.select_one(".icon_yiwanc, .icon-finish, .icon-chuangguan-ok")
+        )
+        if fin >= tot or bar_pct == 100:
+            return fin, tot, max_pct
+        return fin, tot, min(99, round(fin / tot * 100))
+
+    if bar_pct is not None:
+        return 0, 0, min(max_pct, bar_pct)
+
+    return 0, 0, max_pct
+
+
 def decode_course_point(html_text: str) -> Dict[str, Any]:
     """
     解析章节列表页面，提取章节点信息
-    
+
     Args:
         html_text: 章节列表页面的HTML内容
-        
+
     Returns:
         章节信息字典，包含是否锁定状态和章节点列表
     """
@@ -153,16 +202,30 @@ def decode_course_point(html_text: str) -> Dict[str, Any]:
 
         course_point["points"].extend(points)
 
+    fin, tot, pct = parse_course_progress(html_text, soup=soup)
+    has_progress_indicator = bool(
+        tot > 0
+        or _PROGRESS_BAR_REGEX.search(html_text)
+        or course_point["points"]
+        or "完成任务点" in html_text
+        or soup.select("div.chapter_unit li")
+    )
+    if not has_progress_indicator:
+        course_point["progress"] = 0
+        course_point["is_finished"] = False
+    else:
+        course_point["progress"] = pct
+        course_point["is_finished"] = pct >= 100 and not course_point["hasLocked"]
     return course_point
 
 
 def _extract_points_from_chapter(chapter_unit) -> List[Dict[str, Any]]:
     """
     从章节单元中提取章节点信息
-    
+
     Args:
         chapter_unit: BeautifulSoup对象，表示一个章节单元
-        
+
     Returns:
         章节点信息列表
     """
@@ -171,11 +234,15 @@ def _extract_points_from_chapter(chapter_unit) -> List[Dict[str, Any]]:
 
     for raw_point in raw_points:
         point = raw_point.div
-        if "id" not in point.attrs:
+        if not point or "id" not in point.attrs:
             continue
 
-        point_id = re.findall(r"^cur(\d{1,20})$", point.attrs["id"])[0]
-        point_title = point.select_one("a.clicktitle").text.replace("\n", "").strip()
+        id_match = re.findall(r"^cur(\d{1,20})$", str(point.attrs["id"]))
+        if not id_match:
+            continue
+        point_id = id_match[0]
+        title_el = point.select_one("a.clicktitle")
+        point_title = title_el.text.replace("\n", "").strip() if title_el else ""
 
         # 提取任务数量
         job_count = 1  # 默认为1
@@ -187,7 +254,10 @@ def _extract_points_from_chapter(chapter_unit) -> List[Dict[str, Any]]:
 
         # 判断是否已完成
         is_finished = False
-        if point.select_one("span.bntHoverTips") and "已完成" in point.select_one("span.bntHoverTips").text:
+        if (
+            (point.select_one("span.bntHoverTips") and "已完成" in point.select_one("span.bntHoverTips").text)
+            or point.select_one(".icon_yiwanc, .icon-finish, .icon-chuangguan-ok")
+        ):
             is_finished = True
 
         point_detail = {
