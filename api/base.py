@@ -6,6 +6,7 @@ import secrets
 import re
 import threading
 import time
+import uuid
 from difflib import SequenceMatcher
 from enum import Enum, IntEnum
 from hashlib import md5
@@ -1711,14 +1712,58 @@ class Chaoxing:
         course_id = str(_course.get("courseId", ""))
         class_id = str(_course.get("clazzId", ""))
         cpi = str(_course.get("cpi", ""))
-        topic_uuid = str(_job.get("topic_uuid") or _job.get("property", {}).get("uuid", ""))
-        bbsid = str(_job.get("bbsid") or _job.get("property", {}).get("bbsid", ""))
+        topic_uuid = str(_job.get("topic_uuid") or _job.get("property", {}).get("uuid", "")).strip()
+        bbsid = str(_job.get("bbsid") or _job.get("property", {}).get("bbsid", "")).strip()
         title = _job.get("title") or "话题讨论"
+        job_id = str(_job.get("jobid", ""))
+        mid = str(_job.get("mid") or _job.get("property", {}).get("mid", "")).strip()
+        knowledge_id = str(_job_info.get("knowledgeid") or "")
+        if not knowledge_id:
+            m = re.findall(r"nodeId_(\d+)", str(_job.get("otherinfo", "")))
+            if m:
+                knowledge_id = m[0]
 
         session = self._session
         self.rate_limiter.limit_rate()
 
-        reply_list_url = f"https://groupweb.chaoxing.com/course/topic/v3/bbs/{bbsid}/{topic_uuid}/replysList"
+        reply_list_url = ""
+        # 兼容 insertbbs 模块：卡片未直出 uuid 与 bbsid 时从讨论卡片页面动态解析真实标识
+        if not topic_uuid or not bbsid:
+            chapter_url = "https://mooc1.chaoxing.com/mooc-ans/bbscircle/chapter"
+            chapter_params = {
+                "mtopicid": mid,
+                "jobid": job_id,
+                "isPortal": "false",
+                "knowledgeid": knowledge_id,
+                "ut": "s",
+                "clazzId": class_id,
+                "courseid": course_id,
+                "isJob": "false",
+            }
+            try:
+                chapter_resp = session.get(chapter_url, params=chapter_params, timeout=10)
+                if chapter_resp.status_code == 200:
+                    if 'id="isFinished" value="true"' in chapter_resp.text:
+                        logger.info(f"话题已回复完成 -> {title}")
+                        return StudyResult.SUCCESS
+                    data_match = re.search(
+                        r'data=["\'](https://groupweb\.chaoxing\.com/course/topic/v3/bbs/([^/]+)/([^/]+)/replysList[^\"]*)["\']',
+                        chapter_resp.text,
+                    )
+                    if data_match:
+                        reply_list_url = data_match.group(1)
+                        bbsid = data_match.group(2)
+                        topic_uuid = data_match.group(3)
+            except Exception as e:
+                logger.debug(f"动态解析话题详情地址异常: {e}")
+
+        if not reply_list_url and bbsid and topic_uuid:
+            reply_list_url = f"https://groupweb.chaoxing.com/course/topic/v3/bbs/{bbsid}/{topic_uuid}/replysList"
+
+        if not topic_uuid or not bbsid or not reply_list_url:
+            logger.error(f"话题讨论参数解析失败，跳过 -> {title}")
+            return StudyResult.ERROR
+
         params = {
             "courseId": course_id,
             "classId": class_id,
@@ -1732,7 +1777,7 @@ class Chaoxing:
             resp.encoding = "utf-8"
             if resp.status_code == 200:
                 uid = str(session.cookies.get("UID") or session.cookies.get("_uid") or "")
-                if uid and f'creater_id="{uid}"' in resp.text:
+                if uid and (f'creater_id="{uid}"' in resp.text or f'createrPuid":{uid}' in resp.text or f'createrPuid": "{uid}"' in resp.text):
                     logger.info(f"话题已回复过，直接标记完成 -> {title}")
                     return StudyResult.SUCCESS
 
@@ -1763,12 +1808,12 @@ class Chaoxing:
 
         logger.info(f"正在发表话题回复 -> [{title}]: {reply_content}")
 
-        submit_url = f"https://groupweb.chaoxing.com/pc/invitation/{topic_uuid}/addReplys" if topic_uuid else "https://groupweb.chaoxing.com/course/topic/addReply"
+        submit_url = f"https://groupweb.chaoxing.com/pc/invitation/{topic_uuid}/addReplys"
         payload = {
             "courseId": course_id,
             "classId": class_id,
             "replyId": "-1",
-            "uuid": topic_uuid,
+            "uuid": str(uuid.uuid4()),
             "topic_content": reply_content,
             "files_url": "",
             "files_attr": "",
@@ -1784,10 +1829,10 @@ class Chaoxing:
         try:
             post_resp = session.post(submit_url, data=payload, headers=headers, timeout=10)
             if post_resp.status_code == 405:
-                logger.warning(f"话题已截止或关闭回复(HTTP 405)，标记完成 -> {title}")
+                logger.warning(f"话题已截止或关闭回复，标记完成 -> {title}")
                 return StudyResult.SUCCESS
             if not post_resp.text or not post_resp.text.strip():
-                logger.info(f"话题回复已提交(HTTP {post_resp.status_code}) -> {title}")
+                logger.info(f"话题回复已提交 HTTP {post_resp.status_code} -> {title}")
                 return StudyResult.SUCCESS if post_resp.status_code == 200 else StudyResult.ERROR
             try:
                 res_data = post_resp.json()
@@ -1802,7 +1847,7 @@ class Chaoxing:
                 logger.info(f"话题回复成功 -> {title}")
                 return StudyResult.SUCCESS
             msg = str(res_data.get("msg", "回复提交未通过"))
-            if "最多回复" in msg:
+            if "最多回复" in msg or "已达到" in msg or "重复回复" in msg:
                 logger.info(f"已达到该话题回复上限，视作完成 -> {title}")
                 return StudyResult.SUCCESS
             logger.error(f"话题回复失败 -> [{msg}] {title}")

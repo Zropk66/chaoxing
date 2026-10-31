@@ -456,7 +456,7 @@ def _process_topic_task(card: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "content": property_data.get("content", ""),
             "otherinfo": card.get("otherInfo", ""),
             "property": property_data,
-            "mid": card.get("mid", ""),
+            "mid": str(card.get("mid") or property_data.get("mid", "")),
             "aid": card.get("aid", ""),
         }
     except Exception as e:
