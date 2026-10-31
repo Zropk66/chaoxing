@@ -7,7 +7,7 @@ function pushToast(message, type = 'info') {
   const container = document.getElementById('toastContainer');
   if (!container) return;
   const card = document.createElement('div');
-  card.className = 'toast-card';
+  card.className = `toast-card toast-${type}`;
   card.textContent = message;
   container.appendChild(card);
   setTimeout(() => card.classList.add('show'), 10);
@@ -198,14 +198,22 @@ function switchLoginTab(tab) {
 
 async function startQrSession() {
   if (qrPollTimer) clearInterval(qrPollTimer);
+  const qrBox = document.getElementById('loginQrBox');
   const imgEl = document.getElementById('loginQrImage');
   const tipEl = document.getElementById('loginQrTip');
+  if (qrBox) qrBox.classList.add('loading');
+  if (imgEl) imgEl.src = '';
   if (tipEl) tipEl.textContent = '正在拉取二维码...';
 
   try {
     const res = await API.createQrSession();
     if (res.status && res.session_id) {
-      if (imgEl) imgEl.src = res.qr_url;
+      if (imgEl) {
+        imgEl.onload = () => {
+          if (qrBox) qrBox.classList.remove('loading');
+        };
+        imgEl.src = res.qr_url;
+      }
       if (tipEl) tipEl.textContent = '请打开学习通 APP 扫码登录';
       qrPollTimer = setInterval(async () => {
         const poll = await API.pollQrStatus(res.session_id);
@@ -213,17 +221,23 @@ async function startQrSession() {
           tipEl.textContent = '已扫码，请在手机端点击确认登录';
         } else if (poll.status === 'SUCCESS') {
           clearInterval(qrPollTimer);
+          if (qrBox) qrBox.classList.remove('loading');
           pushToast('扫码登录成功');
           closeLoginModal();
           await loadAccounts();
           await loadCourses(false);
         } else if (poll.status === 'EXPIRED') {
           clearInterval(qrPollTimer);
+          if (qrBox) qrBox.classList.remove('loading');
           if (tipEl) tipEl.textContent = '二维码已失效，点击重新加载';
         }
       }, 1500);
+    } else {
+      if (qrBox) qrBox.classList.remove('loading');
+      if (tipEl) tipEl.textContent = res.msg || '获取二维码失败，点击刷新';
     }
   } catch (e) {
+    if (qrBox) qrBox.classList.remove('loading');
     if (tipEl) tipEl.textContent = '生成二维码失败，请检查网络';
   }
 }

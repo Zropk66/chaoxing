@@ -204,7 +204,13 @@
             <div style="font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-main);">
               学习通 APP 扫码登录
             </div>
-            <img id="loginQrImage" style="width: 170px; height: 170px; background: white; padding: 6px; border-radius: 8px; margin: 0.5rem auto; display: block;" alt="二维码">
+            <div class="qr-box loading" id="loginQrBox">
+              <div class="qr-loading-overlay">
+                <div class="qr-spinner"></div>
+                <div class="qr-scanner-line"></div>
+              </div>
+              <img id="loginQrImage" class="qr-image" alt="二维码">
+            </div>
             <div id="loginQrTip" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">正在拉取二维码...</div>
             <button type="button" class="btn btn-secondary" style="margin-top: 0.75rem; font-size: 0.75rem; padding: 0.25rem 0.75rem;" onclick="startQrSession()">刷新二维码</button>
           </div>
