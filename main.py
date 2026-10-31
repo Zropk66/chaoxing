@@ -725,6 +725,10 @@ def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any],
             logger.info(f"课程列表过滤完毕，当前任务课程数量: {len(course_task)}")
 
             tasks = []
+            page_total = 0
+            page_finished = 0
+            local_total = 0
+            local_finished = 0
             for course in course_task:
                 if cancel_evt.is_set():
                     logger.warning("任务在读取课程章节阶段被用户终止")
@@ -740,13 +744,23 @@ def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any],
                     logger.info(f"课程 {course['title']} 完成度为 100%，直接跳过")
                     continue
                 for i, point in enumerate(point_list["points"]):
+                    local_total += 1
+                    if point.get("has_finished"):
+                        local_finished += 1
+                        continue
                     tasks.append(ChapterTask(point=point, index=i, course=course))
+                page_total += point_list.get("page_total", 0)
+                page_finished += point_list.get("page_finished", 0)
 
             if cancel_evt.is_set():
                 logger.warning("任务在执行前被用户终止")
                 return
 
-            hub.set_total_jobs(len(tasks), all_finished=bool(course_task and not tasks))
+            # 分母与起始已完成数取课程页统计值，与课程列表完成度同源；缺统计时回退本地章节口径
+            if page_total:
+                hub.set_total_jobs(page_total, completed_base=page_finished)
+            else:
+                hub.set_total_jobs(local_total, completed_base=local_finished)
 
             if tasks:
                 p = JobProcessor(chaoxing, tasks, common_config)

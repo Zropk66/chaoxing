@@ -8,6 +8,8 @@ from typing import Any, Optional
 class TaskStateHub:
     """运行时单例状态总线，协调动态倍速、大屏监控与手动答题队列."""
 
+    _STATUS_INTERVAL = 0.25
+
     _instance = None
     _init_lock = threading.Lock()
 
@@ -23,6 +25,7 @@ class TaskStateHub:
         self._web_mode = False
         self._is_task_running = False
         self._last_status_broadcast = 0.0
+        self._flush_timer: Optional[threading.Timer] = None
         self._global_speed = 1.0
         self._worker_speeds: dict[str, float] = {}
         self._workers: dict[str, dict[str, Any]] = {}
@@ -93,6 +96,7 @@ class TaskStateHub:
             was_running = self._is_task_running
             self._is_task_running = running
             if running:
+                self._cancel_flush_locked()
                 self._overall_stats["start_time"] = time.time()
                 self._overall_stats["completed_jobs"] = 0
                 self._overall_stats["total_jobs"] = 0
@@ -111,22 +115,48 @@ class TaskStateHub:
         with self._lock:
             return self._is_task_running
 
-    def set_total_jobs(self, total: int, all_finished: bool = False) -> None:
+    def set_total_jobs(self, total: int, all_finished: bool = False, completed_base: int = 0) -> None:
+        """写入任务总数，并可用课程页统计值作为已完成起始值，使看板与课程列表同源."""
         with self._lock:
             self._overall_stats["total_jobs"] = total
+            self._overall_stats["completed_jobs"] = max(0, min(completed_base, total))
             self._overall_stats["all_finished"] = bool(all_finished and total == 0)
         self.broadcast_event("STATUS_UPDATE", self.get_snapshot())
 
     def increment_completed_jobs(self) -> None:
-        should_broadcast = False
         with self._lock:
-            self._overall_stats["completed_jobs"] += 1
+            total = self._overall_stats["total_jobs"]
+            if total > 0:
+                self._overall_stats["completed_jobs"] = min(self._overall_stats["completed_jobs"] + 1, total)
+            else:
+                self._overall_stats["completed_jobs"] += 1
             now = time.time()
-            if now - self._last_status_broadcast >= 0.25 or self._overall_stats["completed_jobs"] >= self._overall_stats["total_jobs"]:
+            due = now - self._last_status_broadcast
+            if due >= self._STATUS_INTERVAL or self._overall_stats["completed_jobs"] >= total:
                 self._last_status_broadcast = now
-                should_broadcast = True
-        if should_broadcast:
+                self._cancel_flush_locked()
+                fire_now = True
+            else:
+                fire_now = False
+                if self._flush_timer is None:
+                    self._flush_timer = threading.Timer(self._STATUS_INTERVAL - due, self._flush_status_update)
+                    self._flush_timer.daemon = True
+                    self._flush_timer.start()
+        if fire_now:
             self.broadcast_event("STATUS_UPDATE", self.get_snapshot())
+
+    def _cancel_flush_locked(self) -> None:
+        """丢弃待触发的尾沿补推，调用方须持有锁."""
+        if self._flush_timer is not None:
+            self._flush_timer.cancel()
+            self._flush_timer = None
+
+    def _flush_status_update(self) -> None:
+        """补推被限流吞掉的最后一次递增，避免进度条停在旧值."""
+        with self._lock:
+            self._flush_timer = None
+            self._last_status_broadcast = time.time()
+        self.broadcast_event("STATUS_UPDATE", self.get_snapshot())
 
     def increment_passed_tests(self) -> None:
         with self._lock:

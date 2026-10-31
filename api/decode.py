@@ -135,6 +135,9 @@ _PROGRESS_BAR_REGEX = re.compile(
 )
 
 
+_TASK_STAT_REGEX = re.compile(r'完成任务点[^\d]*<span[^>]*>(\d+)</span>\s*/\s*(\d+)')
+
+
 def parse_course_progress(html_text: str, soup: Optional[BeautifulSoup] = None) -> Tuple[int, int, int]:
     """解析章节页任务点统计、章节完成状态与进度百分比."""
     if soup is None:
@@ -143,7 +146,7 @@ def parse_course_progress(html_text: str, soup: Optional[BeautifulSoup] = None) 
     has_locked = any("解锁" in tip.get_text() for tip in soup.select("span.bntHoverTips"))
     max_pct = 99 if has_locked else 100
 
-    m = re.search(r'完成任务点[^\d]*<span[^>]*>(\d+)</span>\s*/\s*(\d+)', html_text)
+    m = _TASK_STAT_REGEX.search(html_text)
     if m:
         fin = int(m.group(1))
         tot = int(m.group(2))
@@ -156,7 +159,7 @@ def parse_course_progress(html_text: str, soup: Optional[BeautifulSoup] = None) 
     bar_m = _PROGRESS_BAR_REGEX.search(html_text)
     bar_pct = int(bar_m.group(1) or bar_m.group(2)) if bar_m else None
 
-    lis = soup.select("div.chapter_unit li")
+    lis = [li for li in soup.select("div.chapter_unit li") if li.find("ul") is None]
     if lis:
         has_any_job = any(
             li.select_one("input.knowledgeJobCount") or li.select_one("span.bntHoverTips")
@@ -206,6 +209,9 @@ def decode_course_point(html_text: str) -> Dict[str, Any]:
         course_point["points"].extend(points)
 
     _, tot, pct = parse_course_progress(html_text, soup=soup)
+    stat_m = _TASK_STAT_REGEX.search(html_text)
+    course_point["page_finished"] = int(stat_m.group(1)) if stat_m else 0
+    course_point["page_total"] = int(stat_m.group(2)) if stat_m else 0
     has_progress_indicator = bool(
         tot > 0
         or _PROGRESS_BAR_REGEX.search(html_text)
@@ -236,6 +242,10 @@ def _extract_points_from_chapter(chapter_unit) -> List[Dict[str, Any]]:
     raw_points = chapter_unit.find_all("li")
 
     for raw_point in raw_points:
+        # 父级任务节点只是折叠容器，本身没有任务点，计入学任务会虚增章节总数
+        if raw_point.find("ul") is not None:
+            continue
+
         point = raw_point.div
         if not point or "id" not in point.attrs:
             continue

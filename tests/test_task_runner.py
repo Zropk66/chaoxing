@@ -10,6 +10,17 @@ class TestTaskStateHub(unittest.TestCase):
         self.hub._pending_questions.clear()
         self.hub._workers.clear()
         self.hub._logs.clear()
+        self.hub._last_status_broadcast = 0.0
+        self.hub.set_task_running(False)
+
+    @staticmethod
+    def _last_status(q):
+        last = None
+        while not q.empty():
+            msg = q.get_nowait()
+            if msg["event"] == "STATUS_UPDATE":
+                last = msg["data"]
+        return last
 
     def test_speed_dispatch(self):
         self.hub.set_global_speed(1.5)
@@ -74,6 +85,41 @@ class TestTaskStateHub(unittest.TestCase):
         self.hub.set_task_running(False)
         self.assertFalse(self.hub.is_task_running())
         self.assertFalse(self.hub.get_snapshot()["is_running"])
+
+    def test_set_total_jobs_accepts_page_baseline(self):
+        self.hub.set_task_running(True)
+        self.hub.set_total_jobs(265, completed_base=263)
+        snap = self.hub.get_snapshot()
+        self.assertEqual(snap["total_jobs"], 265)
+        self.assertEqual(snap["completed_jobs"], 263)
+        self.assertEqual(snap["overall_progress"], 99.2)
+
+        self.hub.increment_completed_jobs()
+        self.assertEqual(self.hub.get_snapshot()["completed_jobs"], 264)
+
+    def test_completed_jobs_never_exceed_total(self):
+        self.hub.set_task_running(True)
+        self.hub.set_total_jobs(5, completed_base=4)
+        for _ in range(10):
+            self.hub.increment_completed_jobs()
+        snap = self.hub.get_snapshot()
+        self.assertEqual(snap["completed_jobs"], 5)
+        self.assertEqual(snap["overall_progress"], 100.0)
+
+    def test_completed_jobs_burst_flushes_final_value(self):
+        self.hub.set_task_running(True)
+        self.hub.set_total_jobs(5)
+        q = self.hub.subscribe_events()
+        try:
+            for _ in range(3):
+                self.hub.increment_completed_jobs()
+            time.sleep(0.4)
+            last = self._last_status(q)
+            self.assertIsNotNone(last)
+            self.assertEqual(last["completed_jobs"], 3)
+            self.assertEqual(last["overall_progress"], 60.0)
+        finally:
+            self.hub.unsubscribe_events(q)
 
     def test_event_burst_does_not_evict_listener(self):
         q = self.hub.subscribe_events()
