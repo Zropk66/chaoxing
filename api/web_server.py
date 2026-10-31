@@ -9,12 +9,18 @@ from flask import Flask, Response, jsonify, render_template, request
 from api.account_manager import AccountManager
 from api.chaoxing_auth import ChaoXingQRManager
 from api.config_manager import ConfigManager
+from api.cookies import parse_cookie_string
 from api.decode import parse_course_progress as _parse_course_progress_data
 from api.task_runner import TaskStateHub
 
 _course_progress_cache: dict[str, tuple[float, dict]] = {}
 _courses_list_cache: dict[str, tuple[float, list[dict]]] = {}
 _CACHE_TTL = 300.0
+
+
+def _empty_progress(text: str = "待读取") -> dict:
+    """构造未取到进度时的占位结果."""
+    return {"finished": 0, "total": 0, "percent": 0, "text": text}
 
 
 def _fetch_single_course_progress(
@@ -27,7 +33,7 @@ def _fetch_single_course_progress(
     clazz_id = str(item.get("clazzId", ""))
     cpi = str(item.get("cpi", ""))
     if not cid or not clazz_id:
-        return {"finished": 0, "total": 0, "percent": 0, "text": "待读取"}
+        return _empty_progress()
 
     cache_key = f"{acc_key}_{cid}_{clazz_id}" if acc_key else f"{cid}_{clazz_id}"
     now = time.time()
@@ -51,14 +57,14 @@ def _fetch_single_course_progress(
         resp.encoding = "utf-8"
 
         if resp.status_code != 200:
-            return {"finished": 0, "total": 0, "percent": 0, "text": "待读取"}
+            return _empty_progress()
 
         if (
             "passport2.chaoxing.com" in resp.url
             or "login" in resp.url
             or "passport2.chaoxing.com" in resp.text
         ):
-            return {"finished": 0, "total": 0, "percent": 0, "text": "待刷新"}
+            return _empty_progress("待刷新")
 
         has_indicator = (
             "完成任务点" in resp.text
@@ -67,7 +73,7 @@ def _fetch_single_course_progress(
             or "studentcourse" in resp.text
         )
         if not has_indicator:
-            return {"finished": 0, "total": 0, "percent": 0, "text": "待读取"}
+            return _empty_progress()
 
         fin, tot, pct = _parse_course_progress_data(resp.text)
         if tot > 0:
@@ -88,7 +94,7 @@ def _fetch_single_course_progress(
         except Exception:
             pass
 
-    return {"finished": 0, "total": 0, "percent": 0, "text": "待读取"}
+    return _empty_progress()
 
 
 def create_app(test_config: dict | None = None) -> Flask:
@@ -144,6 +150,14 @@ def create_app(test_config: dict | None = None) -> Flask:
         except Exception:
             pass
 
+    def _apply_session_cookies(cookies_str: str) -> None:
+        """把指定账号的 cookie 写入当前会话并同步全局倍速."""
+        from api.base import SessionManager
+        session = SessionManager.get_session()
+        session.cookies.clear()
+        session.cookies.update(parse_cookie_string(cookies_str))
+        _sync_hub_speed()
+
     _sync_hub_speed()
 
     @app.route("/")
@@ -172,17 +186,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         if not active:
             return jsonify({"status": "error", "msg": "账号不存在"}), 404
 
-        from api.base import SessionManager
-        SessionManager.get_session().cookies.clear()
-        cookies_str = active.get("cookies", "")
-        if cookies_str:
-            cookie_dict = {}
-            for item in cookies_str.split(";"):
-                if "=" in item:
-                    k, v = item.strip().split("=", 1)
-                    cookie_dict[k] = v
-            SessionManager.get_session().cookies.update(cookie_dict)
-        _sync_hub_speed()
+        _apply_session_cookies(active.get("cookies", ""))
         return jsonify({"status": "success", "active_account": acc_id})
 
     @app.route("/api/accounts/alias", methods=["POST"])
@@ -207,17 +211,8 @@ def create_app(test_config: dict | None = None) -> Flask:
             return jsonify({"status": "error", "msg": "缺少 account_id"}), 400
         ok = account_mgr.delete_account(account_id)
         if ok:
-            from api.base import SessionManager
-            SessionManager.get_session().cookies.clear()
             active = account_mgr.get_active_account()
-            if active and active.get("cookies"):
-                cookie_dict = {}
-                for item in active["cookies"].split(";"):
-                    if "=" in item:
-                        k, v = item.strip().split("=", 1)
-                        cookie_dict[k] = v
-                SessionManager.get_session().cookies.update(cookie_dict)
-            _sync_hub_speed()
+            _apply_session_cookies(active.get("cookies", "") if active else "")
             return jsonify({
                 "status": "success",
                 "active_account": active["id"] if active else None,
@@ -240,15 +235,7 @@ def create_app(test_config: dict | None = None) -> Flask:
                 "cookies": res["cookies"],
                 "use_cookies": "true",
             })
-            cookie_dict = {}
-            for item in res["cookies"].split(";"):
-                if "=" in item:
-                    k, v = item.strip().split("=", 1)
-                    cookie_dict[k] = v
-            from api.base import SessionManager
-            SessionManager.get_session().cookies.clear()
-            SessionManager.get_session().cookies.update(cookie_dict)
-            _sync_hub_speed()
+            _apply_session_cookies(res["cookies"])
         return jsonify(res)
 
     @app.route("/api/auth/login", methods=["POST"])
@@ -269,15 +256,9 @@ def create_app(test_config: dict | None = None) -> Flask:
                 "use_cookies": "true",
             })
             if "cookies" in res:
-                cookie_dict = {}
-                for item in res["cookies"].split(";"):
-                    if "=" in item:
-                        k, v = item.strip().split("=", 1)
-                        cookie_dict[k] = v
-                from api.base import SessionManager
-                SessionManager.get_session().cookies.clear()
-                SessionManager.get_session().cookies.update(cookie_dict)
-            _sync_hub_speed()
+                _apply_session_cookies(res["cookies"])
+            else:
+                _sync_hub_speed()
             return jsonify({"status": "success", "account_id": uid})
         return jsonify({"status": "error", "msg": res.get("msg", "登录失败")}), 401
 
@@ -401,13 +382,7 @@ def create_app(test_config: dict | None = None) -> Flask:
                 raw_courses = []
 
         progress_map = {}
-        cookies_str = active.get("cookies", "")
-        session_cookies = {}
-        if cookies_str:
-            for item in cookies_str.split(";"):
-                if "=" in item:
-                    k, v = item.strip().split("=", 1)
-                    session_cookies[k] = v
+        session_cookies = parse_cookie_string(active.get("cookies", ""))
 
         with ThreadPoolExecutor(max_workers=min(5, max(1, len(raw_courses)))) as pool:
             futures = [
@@ -420,7 +395,7 @@ def create_app(test_config: dict | None = None) -> Flask:
                 try:
                     res_val = f.result()
                 except Exception:
-                    res_val = {"finished": 0, "total": 0, "percent": 0, "text": "待读取"}
+                    res_val = _empty_progress()
                 progress_map[cid] = res_val
                 if clazz_id:
                     progress_map[f"{cid}_{clazz_id}"] = res_val

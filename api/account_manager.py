@@ -7,17 +7,18 @@ import threading
 import time
 from typing import Optional
 
+from api.cookies import parse_cookie_string
+
 
 def extract_uid_from_data(data: dict) -> str:
     uid = str(data.get("uid") or "").strip()
     if uid and uid.isdigit():
         return uid
-    cookies = str(data.get("cookies") or "")
-    for item in cookies.split(";"):
-        if "=" in item:
-            k, v = item.strip().split("=", 1)
-            if k in ("_uid", "UID") and v.strip() and v.strip().isdigit():
-                return v.strip()
+    cookies = parse_cookie_string(data.get("cookies"))
+    for key in ("_uid", "UID"):
+        value = cookies.get(key, "").strip()
+        if value and value.isdigit():
+            return value
     return ""
 
 
@@ -25,6 +26,11 @@ class AccountManager:
     """管理独立账号配置文件的存储与切换."""
 
     _lock = threading.Lock()
+
+    @staticmethod
+    def _safe_name(account_id: str, default: str = "") -> str:
+        """过滤账号 ID 中的非法文件名字符."""
+        return "".join(c for c in str(account_id) if c.isalnum() or c in ("_", "-")) or default
 
     def __init__(self, accounts_dir: str = "accounts", auto_import_legacy: bool = True) -> None:
         self.accounts_dir = accounts_dir
@@ -158,7 +164,7 @@ class AccountManager:
 
     def delete_account(self, account_id: str) -> bool:
         """删除指定账号的配置文件."""
-        safe_name = "".join(c for c in account_id if c.isalnum() or c in ("_", "-"))
+        safe_name = self._safe_name(account_id)
         if not safe_name:
             return False
         file_path = os.path.join(self.accounts_dir, f"{safe_name}.ini")
@@ -178,7 +184,7 @@ class AccountManager:
     def set_alias(self, account_id: str, alias: str) -> bool:
         """写入用户自定义昵称，空字符串表示恢复默认展示."""
         name = str(alias).strip()
-        safe_name = "".join(c for c in account_id if c.isalnum() or c in ("_", "-"))
+        safe_name = self._safe_name(account_id)
         if not safe_name:
             return False
         file_path = os.path.join(self.accounts_dir, f"{safe_name}.ini")
@@ -210,7 +216,7 @@ class AccountManager:
             uid = str(username).strip()
 
         account_id = uid or username
-        safe_name = "".join(c for c in account_id if c.isalnum() or c in ("_", "-")) or "default"
+        safe_name = self._safe_name(account_id, "default")
         file_path = os.path.join(self.accounts_dir, f"{safe_name}.ini")
 
         config = configparser.ConfigParser(interpolation=None)
@@ -240,7 +246,7 @@ class AccountManager:
     def get_daily_watched_seconds(self, username: str) -> float:
         """获取指定账号今日已观看视频的累计时长."""
         today_str = time.strftime("%Y-%m-%d")
-        safe_name = "".join(c for c in username if c.isalnum() or c in ("_", "-")) or "default"
+        safe_name = self._safe_name(username, "default")
         stats_file = os.path.join(self.accounts_dir, "daily_watch.json")
         try:
             if os.path.exists(stats_file):
@@ -254,7 +260,7 @@ class AccountManager:
     def add_daily_watched_seconds(self, username: str, seconds: float) -> float:
         """累加指定账号今日观看视频时长并持久化."""
         today_str = time.strftime("%Y-%m-%d")
-        safe_name = "".join(c for c in username if c.isalnum() or c in ("_", "-")) or "default"
+        safe_name = self._safe_name(username, "default")
         key = f"{safe_name}_{today_str}"
         stats_file = os.path.join(self.accounts_dir, "daily_watch.json")
         with self._lock:

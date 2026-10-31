@@ -24,7 +24,7 @@ from api.answer import Tiku, TikuManual
 from api.answer_check import cut
 from api.cipher import AESCipher
 from api.config import GlobalConst as gc
-from api.cookies import save_cookies, use_cookies
+from api.cookies import parse_cookie_string, save_cookies, use_cookies
 from api.decode import (
     decode_course_list,
     decode_course_point,
@@ -411,11 +411,7 @@ class Chaoxing:
             if isinstance(raw_cookies, dict):
                 cookie_dict = raw_cookies
             elif isinstance(raw_cookies, str):
-                cookie_dict = {}
-                for item in raw_cookies.split(";"):
-                    if "=" in item:
-                        k, v = item.strip().split("=", 1)
-                        cookie_dict[k] = v
+                cookie_dict = parse_cookie_string(raw_cookies)
 
             sm_session = SessionManager.get_session()
             if hasattr(sm_session, "_mock_return_value") or type(sm_session).__name__ in ("MagicMock", "Mock"):
