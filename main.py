@@ -357,6 +357,9 @@ def process_job(chaoxing: Chaoxing, course: dict, job: dict, job_info: dict, spe
     elif job["type"] == "topic":
         logger.trace(f"识别到话题讨论任务, 任务章节: {course['title']} 话题: {job['title']}")
         return chaoxing.study_topic(course, job, job_info)
+    elif job["type"] == "vote":
+        logger.trace(f"识别到随堂问答/投票任务, 任务章节: {course['title']} 问答: {job['title']}")
+        return chaoxing.study_vote(course, job, job_info)
 
     logger.error(f"未知任务类型: {job['type']}")
     return StudyResult.ERROR

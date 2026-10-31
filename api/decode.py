@@ -398,6 +398,13 @@ def _process_attachment_cards(cards: List[Dict[str, Any]]) -> List[Dict[str, Any
             or property_data.get("topicId") is not None
         )
 
+        is_vote = (
+            card_type in ("vote", "insertvote")
+            or prop_type in ("vote", "insertvote")
+            or resource_type in ("vote", "insertvote")
+            or property_data.get("module") in ("vote", "insertvote")
+        )
+
         # 根据任务类型处理
         if is_live:
             live_job = _process_live_task(card)
@@ -407,6 +414,10 @@ def _process_attachment_cards(cards: List[Dict[str, Any]]) -> List[Dict[str, Any
             topic_job = _process_topic_task(card)
             if topic_job:
                 job_list.append(topic_job)
+        elif is_vote:
+            vote_job = _process_vote_task(card)
+            if vote_job:
+                job_list.append(vote_job)
         elif card_type == "video":
             video_job = _process_video_task(card)
             if video_job:
@@ -450,6 +461,30 @@ def _process_topic_task(card: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         }
     except Exception as e:
         logger.error(f"解析话题任务失败: {e}")
+        return None
+
+
+def _process_vote_task(card: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """提取随堂问答投票任务所需参数."""
+    try:
+        property_data = card.get("property", {})
+        active_id = str(property_data.get("id") or property_data.get("activeId") or card.get("id", ""))
+        title = property_data.get("title") or card.get("title", "随堂问答")
+
+        return {
+            "type": "vote",
+            "jobid": card.get("jobid", str(card.get("id", ""))),
+            "title": title,
+            "active_id": active_id,
+            "jtoken": card.get("jtoken", ""),
+            "mid": str(card.get("mid") or property_data.get("mid", "")),
+            "enc": card.get("enc", ""),
+            "otherinfo": card.get("otherInfo", ""),
+            "property": property_data,
+            "aid": card.get("aid", ""),
+        }
+    except Exception as e:
+        logger.error(f"解析投票任务失败: {e}")
         return None
 
 

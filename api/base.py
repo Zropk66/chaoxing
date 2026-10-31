@@ -1811,6 +1811,123 @@ class Chaoxing:
             logger.error(f"话题回复网络请求异常 -> {e}")
             return StudyResult.ERROR
 
+    def study_vote(self, _course: dict, _job: dict, _job_info: dict) -> StudyResult:
+        """执行随堂问答投票任务点."""
+        course_id = str(_course.get("courseId", ""))
+        class_id = str(_course.get("clazzId", ""))
+        active_id = str(_job.get("active_id") or _job.get("property", {}).get("id", ""))
+        job_id = str(_job.get("jobid", ""))
+        jtoken = str(_job.get("jtoken", ""))
+        knowledge_id = str(_job_info.get("knowledgeid") or "")
+        if not knowledge_id:
+            m = re.findall(r"nodeId_(\d+)", str(_job.get("otherinfo", "")))
+            if m:
+                knowledge_id = m[0]
+        title = _job.get("title") or "随堂问答"
+
+        session = self._session
+        self.rate_limiter.limit_rate()
+
+        submit_view_url = "https://mobilelearn.chaoxing.com/widget/chaptervote/goChapterSubmit"
+        params = {
+            "activeId": active_id,
+            "quessequence": "1",
+            "courseId": course_id,
+            "isjob": "true",
+            "ut": "s",
+        }
+        try:
+            resp = session.get(submit_view_url, params=params, timeout=10)
+            if resp.status_code != 200:
+                logger.error(f"获取随堂问答页面失败 ({resp.status_code}) -> {title}")
+                return StudyResult.ERROR
+
+            match = re.search(
+                r'var\s+questionlist\s*=\s*(\[\s*\{.*?\}\s*\]);\s*\n\s*var\s+questionhtml',
+                resp.text,
+                re.DOTALL,
+            )
+            if not match:
+                logger.warning(f"随堂问答未解析到题目列表，可能已完成或无需答题 -> {title}")
+                self._finish_vote_job(job_id, knowledge_id, course_id, class_id, jtoken)
+                return StudyResult.SUCCESS
+
+            js_code = match.group(1)
+            q_list = eval(js_code, {"null": None, "true": True, "false": False, "__builtins__": None})
+            if not q_list:
+                logger.warning(f"随堂问答题目为空 -> {title}")
+                self._finish_vote_job(job_id, knowledge_id, course_id, class_id, jtoken)
+                return StudyResult.SUCCESS
+
+            all_answered = all(bool(q.get("haveAnswer")) for q in q_list)
+            if all_answered:
+                logger.info(f"随堂问答之前已作答，直接完成 -> {title}")
+                self._finish_vote_job(job_id, knowledge_id, course_id, class_id, jtoken)
+                return StudyResult.SUCCESS
+
+            uid = str(session.cookies.get("UID") or session.cookies.get("_uid") or "")
+            payload = {
+                "courseId": course_id,
+                "classId": class_id,
+                "activeId": active_id,
+                "uid": uid,
+                "fid": "",
+            }
+            for q in q_list:
+                qid = str(q.get("id"))
+                qtype = str(q.get("type", 0))
+                payload["questionId"] = qid
+                payload["questionType"] = qtype
+                ans_options = q.get("answer") or []
+                selected_ans = "A"
+                if self.tiku and hasattr(self.tiku, "query"):
+                    try:
+                        tiku_ans = self.tiku.query(q.get("content", ""))
+                        if tiku_ans:
+                            for opt in ans_options:
+                                if opt.get("content") and opt["content"] in tiku_ans:
+                                    selected_ans = opt.get("name", "A")
+                                    break
+                    except Exception:
+                        pass
+                payload[f"answer{qid}"] = selected_ans
+
+            submit_url = "https://mobilelearn.chaoxing.com/widget/pcvote/doQuestion"
+            headers = {
+                "Referer": resp.url,
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
+            post_res = session.post(submit_url, data=payload, headers=headers, timeout=10)
+            if post_res.status_code == 200:
+                try:
+                    res_json = post_res.json()
+                except Exception:
+                    res_json = {}
+                if res_json.get("isresult") in (0, 1):
+                    logger.info(f"随堂问答作答提交成功 -> {title}")
+                    self._finish_vote_job(job_id, knowledge_id, course_id, class_id, jtoken)
+                    return StudyResult.SUCCESS
+                msg = str(res_json.get("msg", ""))
+                if "重复" in msg or "已答" in msg or "已完成" in msg:
+                    logger.info(f"随堂问答已作答过，标记完成 -> {title}")
+                    self._finish_vote_job(job_id, knowledge_id, course_id, class_id, jtoken)
+                    return StudyResult.SUCCESS
+
+            logger.error(f"随堂问答提交未通过: {post_res.text[:100]} -> {title}")
+            return StudyResult.ERROR
+        except Exception as e:
+            logger.error(f"随堂问答处理异常: {e}")
+            return StudyResult.ERROR
+
+    def _finish_vote_job(self, job_id: str, knowledge_id: str, course_id: str, class_id: str, jtoken: str) -> None:
+        if not job_id:
+            return
+        try:
+            url = f"https://mooc1.chaoxing.com/mooc-ans/job/vote?jobid={job_id}&knowledgeid={knowledge_id}&courseid={course_id}&clazzid={class_id}&jtoken={jtoken}"
+            self._session.get(url, timeout=8)
+        except Exception as e:
+            logger.trace(f"投票完成标记通知异常: {e}")
+
     def study_emptypage(self, _course, point):
         _session = self._session
         # &cpi=0&verificationcode=&mooc2=1&microTopicId=0&editorPreview=0
