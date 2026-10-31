@@ -32,6 +32,7 @@ from api.decode import (
     decode_course_folder,
     decode_questions_info,
 )
+from api.task_runner import TaskStateHub
 
 
 def get_timestamp():
@@ -65,7 +66,6 @@ class SessionManager:
 
     def __init__(self):
         if not hasattr(self, "_session"):
-            from api.task_runner import TaskStateHub
             self._session = create_session({} if TaskStateHub().is_web_mode() else None)
 
     @classmethod
@@ -79,7 +79,6 @@ class SessionManager:
 
     @classmethod
     def update_cookies(cls):
-        from api.task_runner import TaskStateHub
         if not TaskStateHub().is_web_mode():
             cls.get_instance()._session.cookies.update(use_cookies())
 
@@ -464,7 +463,6 @@ class Chaoxing:
             _session = self._session
             _session.cookies.clear()
             _session.cookies.update(temp_session.cookies)
-            from api.task_runner import TaskStateHub
             if TaskStateHub().is_web_mode():
                 SessionManager.get_session().cookies.clear()
                 SessionManager.get_session().cookies.update(_session.cookies)
@@ -1031,7 +1029,6 @@ class Chaoxing:
             return StudyResult.SUCCESS
 
         pbar = None
-        from api.task_runner import TaskStateHub
         hub = TaskStateHub()
         try:
             while not passed:
@@ -1080,8 +1077,6 @@ class Chaoxing:
                     logger.trace("Progress logged")
 
                 current_speed = _speed
-                from api.task_runner import TaskStateHub
-                hub = TaskStateHub()
                 if hub.is_web_mode():
                     t_name = threading.current_thread().name
                     current_speed = hub.get_effective_speed(t_name)
@@ -1126,7 +1121,6 @@ class Chaoxing:
                 time.sleep(gc.THRESHOLD)
         finally:
             pbar = self._close_pbar_safe(pbar)
-            from api.task_runner import TaskStateHub
             hub = TaskStateHub()
             if hub.is_web_mode():
                 hub.remove_worker(threading.current_thread().name)
@@ -1266,7 +1260,6 @@ class Chaoxing:
             total_questions = len(questions["questions"])
             found_answers = 0
             answers = self.tiku.query_all(questions["questions"], query_delay=query_delay)
-            from api.task_runner import TaskStateHub
             if TaskStateHub().is_web_mode() and not TaskStateHub().is_task_running():
                 logger.warning("检测到任务终止指令，取消提交章节检测")
                 return StudyResult.ERROR
@@ -1416,7 +1409,6 @@ class Chaoxing:
             if questions["pyFlag"] == "1":
                 return StudyResult.SUCCESS
 
-            from api.task_runner import TaskStateHub
             result_info = self._check_work_result(_session, _course, _job, _job_info, questions)
             if result_info is None:
                 return StudyResult.SUCCESS
@@ -2073,7 +2065,6 @@ class Chaoxing:
         if not points:
             logger.warning("章节列表为空, 跳过章节学习次数增加")
             return StudyResult.SUCCESS
-        from api.task_runner import TaskStateHub
         hub = TaskStateHub()
         while total < target_count:
             for point in points:

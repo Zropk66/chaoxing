@@ -1,4 +1,3 @@
-let activeAccountId = null;
 let currentFullConfig = {};
 let currentPendingPromptId = null;
 let currentSelectedAnswers = [];
@@ -82,7 +81,6 @@ async function loadAccounts() {
     const dropdown = document.getElementById('accountDropdownList');
     if (!dropdown) return;
     dropdown.innerHTML = '';
-    activeAccountId = data.active_account;
 
     const accounts = data.accounts || [];
     const activeAcc = accounts.find(a => a.active) || accounts[0];

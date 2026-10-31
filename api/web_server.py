@@ -1,11 +1,9 @@
 import json
 import os
 import queue
-import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from bs4 import BeautifulSoup
 from flask import Flask, Response, jsonify, render_template, request
 
 from api.account_manager import AccountManager

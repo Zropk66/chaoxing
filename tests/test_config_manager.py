@@ -55,6 +55,6 @@ class TestConfigManager(unittest.TestCase):
         missing_ini = os.path.join("tests", "test_auto_provision.ini")
         if os.path.exists(missing_ini):
             os.remove(missing_ini)
-        cfg = ConfigManager(config_path=missing_ini, template_path="config_template.ini")
+        ConfigManager(config_path=missing_ini, template_path="config_template.ini")
         self.assertTrue(os.path.exists(missing_ini))
         os.remove(missing_ini)

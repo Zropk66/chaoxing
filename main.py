@@ -816,7 +816,7 @@ def start_study_task(common_config: dict[str, Any], tiku_config: dict[str, Any],
 
 
 def stop_study_task() -> bool:
-    global _is_task_running, _current_study_processor, _current_cancel_event
+    global _is_task_running, _current_study_processor
     with _task_run_lock:
         if not _is_task_running:
             return False
