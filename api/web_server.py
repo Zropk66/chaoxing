@@ -185,6 +185,20 @@ def create_app(test_config: dict | None = None) -> Flask:
         _sync_hub_speed()
         return jsonify({"status": "success", "active_account": acc_id})
 
+    @app.route("/api/accounts/alias", methods=["POST"])
+    def set_account_alias():
+        data = request.get_json(silent=True) or {}
+        account_id = str(data.get("account_id", "")).strip()
+        alias = str(data.get("alias", "")).strip()
+        if not account_id:
+            return jsonify({"status": "error", "msg": "缺少 account_id"}), 400
+        if not account_mgr.set_alias(account_id, alias):
+            return jsonify({"status": "error", "msg": "账号不存在或写入失败"}), 404
+        return jsonify({
+            "status": "success",
+            "accounts": account_mgr.list_accounts(),
+        })
+
     @app.route("/api/accounts/delete", methods=["POST"])
     def delete_account():
         data = request.get_json(silent=True) or {}

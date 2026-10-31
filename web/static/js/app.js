@@ -86,7 +86,7 @@ async function loadAccounts() {
     const activeAcc = accounts.find(a => a.active) || accounts[0];
     const currentNameEl = document.getElementById('currentAccountName');
     if (currentNameEl) {
-      currentNameEl.textContent = activeAcc ? (activeAcc.username || activeAcc.uid || activeAcc.id) : '未登录账号';
+      currentNameEl.textContent = activeAcc ? (activeAcc.display_name || activeAcc.uid || activeAcc.id) : '未登录账号';
     }
 
     if (accounts.length === 0) {
@@ -104,11 +104,11 @@ async function loadAccounts() {
       const uEl = document.createElement('div');
       uEl.style.fontWeight = '600';
       uEl.style.cssText = 'overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
-      uEl.textContent = acc.username || acc.uid || acc.id;
+      uEl.textContent = acc.display_name || acc.uid || acc.id;
       const fEl = document.createElement('div');
       fEl.style.fontSize = '0.7rem';
       fEl.style.color = 'var(--text-dim)';
-      fEl.textContent = acc.uid ? `UID: ${acc.uid}` : acc.file;
+      fEl.textContent = acc.alias ? (acc.uid ? `UID: ${acc.uid}` : acc.file) : acc.file;
       textWrap.appendChild(uEl);
       textWrap.appendChild(fEl);
 
@@ -116,7 +116,7 @@ async function loadAccounts() {
         if (!acc.active) {
           await API.switchAccount(acc.id);
           toggleAccountDropdown(false);
-          pushToast(`已切换至账号: ${acc.username || acc.id}`);
+          pushToast(`已切换至账号: ${acc.display_name || acc.uid || acc.id}`);
           await loadAccounts();
           await loadCourses(false);
         } else {
@@ -135,13 +135,35 @@ async function loadAccounts() {
         actionWrap.appendChild(badge);
       }
 
+      const editBtn = document.createElement('button');
+      editBtn.className = 'btn-icon';
+      editBtn.title = '设置昵称';
+      editBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>';
+      editBtn.onclick = async (e) => {
+        e.stopPropagation();
+        const input = prompt('输入账号昵称，留空恢复默认', acc.alias || '');
+        if (input === null) return;
+        try {
+          const res = await API.setAccountAlias(acc.id, input);
+          if (res.status === 'success') {
+            pushToast('昵称已更新');
+            await loadAccounts();
+          } else {
+            pushToast(res.msg || '昵称更新失败', 'error');
+          }
+        } catch (err) {
+          pushToast('昵称更新异常', 'error');
+        }
+      };
+      actionWrap.appendChild(editBtn);
+
       const delBtn = document.createElement('button');
       delBtn.className = 'btn-icon-danger';
       delBtn.title = '删除此账号';
       delBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
       delBtn.onclick = async (e) => {
         e.stopPropagation();
-        const accName = acc.username || acc.uid || acc.id;
+        const accName = acc.display_name || acc.uid || acc.id;
         if (!confirm(`确认删除本地账号配置 [${accName}] 吗？`)) return;
         try {
           const res = await API.deleteAccount(acc.id);

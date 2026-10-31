@@ -828,6 +828,23 @@ table.course-table tr:hover {
   animation: modalFadeIn 0.15s ease-out;
 }
 
+.btn-icon {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0.3rem;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+.btn-icon:hover {
+  color: var(--accent-primary);
+  background: rgba(59, 130, 246, 0.12);
+}
+
 .btn-icon-danger {
   background: none;
   border: none;

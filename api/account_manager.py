@@ -115,10 +115,13 @@ class AccountManager:
 
             raw_username = config.get("common", "username", fallback="").strip()
             username = raw_username if raw_username and raw_username != "xxx" else (uid or acc_id)
+            alias = config.get("common", "alias", fallback="").strip()
             results.append({
                 "id": acc_id,
                 "uid": uid or acc_id,
                 "username": username,
+                "alias": alias,
+                "display_name": alias or uid or acc_id,
                 "file": file_name,
                 "path": file_path,
                 "active": (acc_id == self._active_account_id),
@@ -171,6 +174,34 @@ class AccountManager:
                     self._active_account_id = remaining[0]["id"]
             return True
         return False
+
+    def set_alias(self, account_id: str, alias: str) -> bool:
+        """写入用户自定义昵称，空字符串表示恢复默认展示."""
+        name = str(alias).strip()
+        safe_name = "".join(c for c in account_id if c.isalnum() or c in ("_", "-"))
+        if not safe_name:
+            return False
+        file_path = os.path.join(self.accounts_dir, f"{safe_name}.ini")
+        if not os.path.exists(file_path):
+            return False
+
+        with self._lock:
+            config = configparser.ConfigParser(interpolation=None)
+            config.read(file_path, encoding="utf8")
+            if not config.has_section("common"):
+                config.add_section("common")
+            if config.get("common", "alias", fallback="") == name:
+                return True
+            if name:
+                config.set("common", "alias", name)
+            else:
+                config.remove_option("common", "alias")
+            try:
+                with open(file_path, "w", encoding="utf8") as f:
+                    config.write(f)
+            except OSError:
+                return False
+        return True
 
     def save_account(self, username: str, data: dict) -> str:
         # 提取超星原生UID作为文件名以合并扫码与账号登录配置

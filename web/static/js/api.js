@@ -13,6 +13,15 @@ const API = {
     return res.json();
   },
 
+  async setAccountAlias(accountId, alias) {
+    const res = await fetch('/api/accounts/alias', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: accountId, alias })
+    });
+    return res.json();
+  },
+
   async deleteAccount(accountId) {
     const res = await fetch('/api/accounts/delete', {
       method: 'POST',
